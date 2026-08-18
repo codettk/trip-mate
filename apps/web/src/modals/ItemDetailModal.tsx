@@ -8,7 +8,7 @@
  * "수정 폼으로 가세요"로 미루지 않는다. (캐시 무효화는 useApiMutation 이 한다.)
  */
 
-import { dowOf, formatMoney, formatWon, shortDate } from "@tripmate/core";
+import { dowOf, formatDuration, formatMoney, formatRange, formatWon, shortDate } from "@tripmate/core";
 import { useState } from "react";
 import { api } from "../api/client.ts";
 import { useApiMutation, useMembers } from "../api/hooks.ts";
@@ -65,6 +65,9 @@ export function ItemDetailModal({ open, gid, item, onClose }: ItemDetailModalPro
   }
 
   const cat = CAT_META[item.cat];
+  // 시각은 mono, 걸린 시간은 문장 — 카드와 같은 값을 같은 함수로 만든다.
+  const range = formatRange(item.time, item.endTime);
+  const dur = item.duration === null ? "" : formatDuration(item.duration);
   const payer = members.find((m) => m.id === item.payerId) ?? null;
   const parts = item.shared.members.length + item.shared.guests;
   const per = parts ? Math.round(item.krw / parts) : 0;
@@ -105,7 +108,18 @@ export function ItemDetailModal({ open, gid, item, onClose }: ItemDetailModalPro
           </dd>
 
           <dt>시간</dt>
-          <dd className={item.time ? "mono" : undefined}>{item.time || "시간 미정"}</dd>
+          <dd>
+            {range ? <span className="mono">{range}</span> : "시간 미정"}
+            {/* 종료가 시작보다 이르면 오류가 아니라 익일이다. 색 역할을 빌리지 않으려고 회색 배지를 쓴다. */}
+            {item.nextDay ? (
+              <span style={{ marginLeft: 6 }}>
+                <Badge tone="mute">+1일</Badge>
+              </span>
+            ) : null}
+            {dur ? (
+              <span style={{ color: "var(--ink-3)", fontWeight: 400 }}> · {dur}</span>
+            ) : null}
+          </dd>
 
           <dt>분류</dt>
           <dd>
@@ -124,8 +138,11 @@ export function ItemDetailModal({ open, gid, item, onClose }: ItemDetailModalPro
           {item.cat === "stay" && item.checkIn && item.checkOut ? (
             <>
               <dt>숙박</dt>
+              {/* 시각이 비어 있으면 그 부분만 빼고 날짜만 적는다 — 모르는 시각을 00:00 으로 채우지 않는다. */}
               <dd className="num">
-                {shortDate(item.checkIn)} → {shortDate(item.checkOut)} · {item.nights}박
+                {shortDate(item.checkIn)}
+                {item.checkInTime ? ` ${item.checkInTime}` : ""} → {shortDate(item.checkOut)}
+                {item.checkOutTime ? ` ${item.checkOutTime}` : ""} · {item.nights}박
               </dd>
             </>
           ) : null}

@@ -16,11 +16,18 @@
  *  · 무언가를 만들거나 고칠 때 화면을 갈아타지 않는다 — 추가·상세·수정이 전부 모달이다.
  */
 
-import { formatMoney, formatWon, shortDate, STAY_PHASE_LABEL } from "@tripmate/core";
+import {
+  formatDuration,
+  formatMoney,
+  formatRange,
+  formatWon,
+  shortDate,
+  STAY_PHASE_LABEL,
+} from "@tripmate/core";
 import { useState, type CSSProperties } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useGroup, useItinerary, useMembers, useSettlement } from "../api/hooks.ts";
-import type { Item, ItineraryDay, Member } from "../api/types.ts";
+import type { Item, ItineraryDay, Member, StayChip } from "../api/types.ts";
 import { Avatar, Badge, ErrorBox, memberLabel } from "../components/Bits.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { ItemDetailModal } from "../modals/ItemDetailModal.tsx";
@@ -330,15 +337,15 @@ function DayPane({
         </div>
       </div>
 
-      {/* 그날 묵는 숙소. 체크아웃하는 곳과 새로 체크인하는 곳이 겹치면 2개가 나온다 — 둘 다 보여준다. */}
+      {/*
+        그날 묵는 숙소. 체크아웃하는 곳과 새로 체크인하는 곳이 겹치면 2개가 나온다 — 둘 다 보여준다.
+        ⚠ 여기 나오는 건 **칩**이지 일정 항목이 아니다. 숙소 항목 카드 자체는 체크인한 날에만 남는다.
+           매일 복제하면 같은 항목이 여러 번 있는 것처럼 보여 일정 개수와 금액 합계가 전부 어긋난다.
+      */}
       {day.stays.length ? (
-        <div className="stayband">
+        <div className="stayband cards">
           {day.stays.map((st) => (
-            <button key={st.itemId} className="staychip" onClick={() => onOpenItem(st.itemId)}>
-              <Icon name="bed" />
-              {st.title}
-              <em>{STAY_PHASE_LABEL[st.phase]}</em>
-            </button>
+            <StayCard key={st.itemId} stay={st} onOpen={onOpenItem} />
           ))}
         </div>
       ) : null}
@@ -372,6 +379,53 @@ function DayPane({
 }
 
 // ────────────────────────────────────────────────────────────────────
+// 그날 묵는 숙소 카드
+// ────────────────────────────────────────────────────────────────────
+
+/**
+ * 며칠에 걸친 숙소는 매일 이 자리에 나온다.
+ * 예전 알약 칩은 너무 작아 "1일차에만 들어갔다"고 오해하게 만들었다 — 그래서 카드로 키웠다.
+ * 누르면 그 숙소 항목의 상세 모달이 열린다 (체크인한 날에 놓인 그 항목이다).
+ */
+function StayCard({ stay, onOpen }: { stay: StayChip; onOpen: (id: string) => void }) {
+  return (
+    <button className="staycard" onClick={() => onOpen(stay.itemId)}>
+      <span className="tile">
+        <Icon name="bed" />
+      </span>
+      <span className="ct">
+        <span className="hd">
+          <b>{stay.title}</b>
+          <span className="ph">{STAY_PHASE_LABEL[stay.phase]}</span>
+          {/*
+            체크아웃하는 날은 그 집에서 묵지 않으므로 nightIndex 가 null 이다 — 그때는 적지 않는다.
+            체크인한 날이 1박째라 0 이 나올 일이 없어 truthy 검사로 충분하다.
+          */}
+          {stay.nightIndex ? <span className="ni">{stay.nightIndex}박째</span> : null}
+        </span>
+        <small>{stayLine(stay)}</small>
+      </span>
+    </button>
+  );
+}
+
+/**
+ * "09.12 15:00 체크인 · 09.14 11:00 체크아웃".
+ * 시각이 비어 있으면 그 부분만 빼고 날짜만 적는다 — 모르는 시각을 00:00 으로 채우면 거짓말이 된다.
+ * 날짜·시각·낱말이 한 줄에 섞이므로 폰트를 바꾸지 않고 tabular-nums 로 자릿수만 맞춘다.
+ */
+function stayLine(stay: StayChip): string {
+  const seg = (date: string | null, time: string, label: string): string =>
+    date ? `${shortDate(date)}${time ? ` ${time}` : ""} ${label}` : "";
+  return [
+    seg(stay.checkIn, stay.checkInTime, "체크인"),
+    seg(stay.checkOut, stay.checkOutTime, "체크아웃"),
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+// ────────────────────────────────────────────────────────────────────
 // 타임라인 한 칸
 // ────────────────────────────────────────────────────────────────────
 
@@ -389,6 +443,9 @@ function ItemStop({
   // 기타 인원은 따로 강조해야 해서 멤버 부분과 나눠 만든다.
   const memberLabelText = targetLabel({ members: item.shared.members, guests: 0 }, members);
   const noTarget = item.shared.members.length + item.shared.guests === 0;
+  // 시간 범위는 카드 안에서 읽는다. 왼쪽 시간 열은 정렬 기준이라 시작 시각만 남긴다.
+  const range = formatRange(item.time, item.endTime);
+  const dur = item.duration === null ? "" : formatDuration(item.duration);
 
   return (
     <div className="stop" style={{ "--c": c.c } as CSSProperties}>
@@ -407,6 +464,19 @@ function ItemStop({
 
           <span className="ct">
             <h3>{item.title}</h3>
+            {range ? (
+              <span className="trange">
+                <Icon name="clock" size={12} />
+                {range}
+                {dur ? ` · ${dur}` : ""}
+                {/*
+                  종료가 시작보다 이르면 오류가 아니라 익일이다(밤 비행기·야간 버스).
+                  색 역할표에 "다음 날"에 해당하는 색이 없어 회색 mute 배지를 쓴다 —
+                  카테고리·초록·노랑을 빌려 오면 그 색의 뜻이 흐려진다.
+                */}
+                {item.nextDay ? <span className="badge mute">+1일</span> : null}
+              </span>
+            ) : null}
             <p>{item.meta || " "}</p>
             <span className="catlabel" style={{ background: c.bg, color: c.c }}>
               {c.label}

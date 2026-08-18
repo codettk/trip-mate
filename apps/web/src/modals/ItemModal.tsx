@@ -19,9 +19,13 @@ import {
   CATEGORIES,
   CURRENCIES,
   CURRENCY_CODES,
+  crossesMidnight,
   currencyOf,
+  durationMinutes,
+  formatDuration,
   formatMoney,
   formatWon,
+  isTime,
   previewSplit,
   shortDate,
   type Category,
@@ -103,11 +107,15 @@ interface Draft {
   cat: Category;
   dayId: string;
   time: string;
+  /** 종료 시각. 선택이다. 시작보다 이르면 오류가 아니라 **익일**이다. */
+  endTime: string;
   meta: string;
   booked: boolean;
-  /** cat==="stay" 전용 */
+  /** cat==="stay" 전용 — 날짜는 아래 둘이 들고 있고, 시각은 checkInTime/checkOutTime 이 따로 든다 */
   checkIn: string;
   checkOut: string;
+  checkInTime: string;
+  checkOutTime: string;
   split: boolean;
   /** 외화 소수 입력을 그대로 받기 위해 문자열로 둔다. 환산·정산은 언제나 원화 정수다. */
   cost: string;
@@ -117,8 +125,6 @@ interface Draft {
   members: string[];
   guests: number;
 }
-
-const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 export interface ItemModalProps {
   open: boolean;
@@ -167,10 +173,13 @@ export function ItemModal({ open, gid, item, defaultDayId, onClose }: ItemModalP
         cat: item.cat,
         dayId: item.dayId,
         time: item.time,
+        endTime: item.endTime,
         meta: item.meta,
         booked: item.booked,
         checkIn: item.checkIn ?? item.date,
         checkOut: item.checkOut ?? (dayList[dayList.length - 1]?.date ?? item.date),
+        checkInTime: item.checkInTime,
+        checkOutTime: item.checkOutTime,
         split: item.split,
         cost: item.split ? String(item.cost) : "",
         cur: item.split ? item.cur : groupQ.data.group.cur,
@@ -188,10 +197,14 @@ export function ItemModal({ open, gid, item, defaultDayId, onClose }: ItemModalP
       cat: "food",
       dayId: day.id,
       time: "",
+      endTime: "",
       meta: "",
       booked: false,
       checkIn: day.date,
       checkOut: dayList[Math.min(dayList.length - 1, idx + 1)]?.date ?? day.date,
+      // 체크인·체크아웃 시각은 숙소마다 다르다. 기본값을 넣어 두면 확인 없이 저장돼 거짓말이 된다.
+      checkInTime: "",
+      checkOutTime: "",
       split: false,
       cost: "",
       cur: groupQ.data.group.cur,
@@ -254,14 +267,36 @@ export function ItemModal({ open, gid, item, defaultDayId, onClose }: ItemModalP
       ? null
       : previewSplit({ cost, rate, memberCount: draft.members.length, guests: draft.guests });
 
-  const timeOk = draft.time.trim() === "" || HHMM.test(draft.time.trim());
-  const canSave = draft.title.trim().length > 0 && timeOk && !save.isPending;
+  /**
+   * 시각 검증은 전부 core 의 `isTime` 한 벌로 한다 — 서버도 같은 함수를 쓴다.
+   * 여기서 정규식을 다시 쓰면 폼이 통과시킨 값을 서버가 400 으로 돌려보내는 일이 생긴다.
+   */
+  const time = draft.time.trim();
+  const endTime = draft.endTime.trim();
+  const checkInTime = draft.checkInTime.trim();
+  const checkOutTime = draft.checkOutTime.trim();
+
+  const timeOk = isTime(time) && isTime(endTime);
+  /** 종료만 있고 시작이 없으면 언제 끝나는지 알 수 없다. 서버도 400 을 준다. */
+  const endWithoutStart = endTime !== "" && time === "";
+  const stayTimeOk = isTime(checkInTime) && isTime(checkOutTime);
+  /** 종료가 시작보다 이른 건 오류가 아니라 익일이다 — 막지 않고 힌트로 알린다. */
+  const overnight = crossesMidnight(time, endTime);
+  const dur = durationMinutes(time, endTime);
+
+  const canSave =
+    draft.title.trim().length > 0 &&
+    timeOk &&
+    !endWithoutStart &&
+    (!isStay || stayTimeOk) &&
+    !save.isPending;
 
   const submit = () => {
     if (!canSave) return;
     save.mutate({
       dayId: effDayId,
-      time: draft.time.trim(),
+      time,
+      endTime,
       cat: draft.cat,
       title: draft.title.trim(),
       meta: draft.meta.trim(),
@@ -269,6 +304,9 @@ export function ItemModal({ open, gid, item, defaultDayId, onClose }: ItemModalP
       thumb: item?.thumb ?? null,
       checkIn: isStay ? draft.checkIn : null,
       checkOut: isStay ? draft.checkOut : null,
+      // 숙소가 아니면 체크인·체크아웃 시각도 함께 비운다 — 서버도 같은 규칙으로 한 번 더 비운다.
+      checkInTime: isStay ? checkInTime : "",
+      checkOutTime: isStay ? checkOutTime : "",
       // split 이 꺼져 있으면 금액을 아예 보내지 않는다 — 서버도 같은 규칙으로 한 번 더 비운다.
       split: draft.split,
       cost: draft.split ? cost : 0,
@@ -360,17 +398,48 @@ export function ItemModal({ open, gid, item, defaultDayId, onClose }: ItemModalP
           </select>
         </div>
         <div className="field">
-          <label htmlFor="fTime">시간</label>
-          <input
-            id="fTime"
-            type="text"
-            value={draft.time}
-            onChange={(e) => set({ time: e.target.value })}
-            placeholder="14:00 (비워도 됩니다)"
-          />
+          <label htmlFor="fTime">시간 — 시작 ~ 종료</label>
+          <div className="row2">
+            <input
+              id="fTime"
+              type="text"
+              value={draft.time}
+              onChange={(e) => set({ time: e.target.value })}
+              placeholder="시작 14:00"
+              aria-label="시작 시각"
+            />
+            <input
+              id="fTimeEnd"
+              type="text"
+              value={draft.endTime}
+              onChange={(e) => set({ endTime: e.target.value })}
+              placeholder="종료 (선택)"
+              aria-label="종료 시각"
+            />
+          </div>
+          {/*
+            여기 세 갈래는 뜻이 다르다.
+             · 형식 오류 → 고쳐야 저장된다
+             · 종료만 입력 → 저장을 막는다 (서버도 400)
+             · 종료 < 시작 → **오류가 아니다.** 밤 비행기·야간 버스라 익일로 읽고 힌트만 준다
+          */}
           {!timeOk ? (
             <span className="hint">
               <span className="warn">시간은 비워 두거나 HH:MM 형식이어야 합니다.</span>
+            </span>
+          ) : endWithoutStart ? (
+            <span className="hint">
+              <span className="warn">시작 시각이 있어야 종료 시각을 저장할 수 있습니다.</span>
+            </span>
+          ) : dur !== null ? (
+            <span className="hint">
+              {overnight ? (
+                <>
+                  <b>+1일</b> ·{" "}
+                </>
+              ) : null}
+              {formatDuration(dur) || "0분"}
+              {overnight ? " 뒤 다음 날에 끝납니다." : " 걸립니다."}
             </span>
           ) : null}
         </div>
@@ -379,6 +448,7 @@ export function ItemModal({ open, gid, item, defaultDayId, onClose }: ItemModalP
       {isStay ? (
         <>
           <div className="row2">
+            {/* 날짜는 select 가, 시각은 그 아래 입력이 든다. 둘을 한 값으로 합치면 일차·숙박 계산이 흔들린다. */}
             <div className="field">
               <label htmlFor="fIn">체크인</label>
               <select id="fIn" value={draft.checkIn} onChange={(e) => set({ checkIn: e.target.value })}>
@@ -388,6 +458,14 @@ export function ItemModal({ open, gid, item, defaultDayId, onClose }: ItemModalP
                   </option>
                 ))}
               </select>
+              <input
+                id="fInTime"
+                type="text"
+                value={draft.checkInTime}
+                onChange={(e) => set({ checkInTime: e.target.value })}
+                placeholder="15:00 (선택)"
+                aria-label="체크인 시각"
+              />
             </div>
             <div className="field">
               <label htmlFor="fOut">체크아웃</label>
@@ -402,12 +480,28 @@ export function ItemModal({ open, gid, item, defaultDayId, onClose }: ItemModalP
                   </option>
                 ))}
               </select>
+              <input
+                id="fOutTime"
+                type="text"
+                value={draft.checkOutTime}
+                onChange={(e) => set({ checkOutTime: e.target.value })}
+                placeholder="11:00 (선택)"
+                aria-label="체크아웃 시각"
+              />
             </div>
           </div>
+          {!stayTimeOk ? (
+            <p className="hint">
+              <span className="warn">
+                체크인·체크아웃 시각은 비워 두거나 HH:MM 형식이어야 합니다.
+              </span>
+            </p>
+          ) : null}
           <p className="hint">
             숙소는 <b>체크인한 날</b>의 일정에 놓이고, 그 사이 날짜에는 “숙박 중”으로 표시됩니다.
             같은 날 숙소가 2개일 수 있습니다 — 체크아웃하는 곳과 새로 체크인하는 곳이 겹치는 날이
-            그렇습니다. <b>비용은 체크인 날 한 번만 정산에 들어가고 박 수로 쪼개지 않습니다.</b>
+            그렇습니다. <b>비용은 체크인 날 한 번만 정산에 들어가고 박 수로 쪼개지 않습니다.</b> 입력한
+            시각은 묵는 날마다 숙소 카드에 그대로 표시됩니다.
           </p>
         </>
       ) : null}
