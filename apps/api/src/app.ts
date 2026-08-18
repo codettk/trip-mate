@@ -15,6 +15,7 @@ import { itineraryRoutes } from "./modules/itinerary.ts";
 import { photoRoutes } from "./modules/photos.ts";
 import { settlementRoutes } from "./modules/settlement.ts";
 import { shareRoutes } from "./modules/share.ts";
+import { shareLinkRoutes } from "./modules/shares.ts";
 import { storage } from "./storage/index.ts";
 
 export async function buildApp(): Promise<FastifyInstance> {
@@ -58,6 +59,18 @@ export async function buildApp(): Promise<FastifyInstance> {
         error: { message: "파일이 너무 큽니다", code: "too_large" },
       });
     }
+
+    // Fastify 가 이미 4xx 로 판정한 것(깨진 JSON, Content-Length 불일치 …)을
+    // 500 으로 바꿔 내보내면 안 된다. 보낸 쪽 잘못인데 서버 잘못으로 보이면
+    // 원인을 엉뚱한 데서 찾게 된다. 내부 메시지는 담지 않는다.
+    const status = (err as { statusCode?: number }).statusCode;
+    if (typeof status === "number" && status >= 400 && status < 500) {
+      req.log.warn({ err }, "bad request");
+      return reply.status(status).send({
+        error: { message: "요청이 올바르지 않습니다", code: "bad_request" },
+      });
+    }
+
     req.log.error({ err }, "unhandled");
     return reply.status(500).send({
       error: {
@@ -93,6 +106,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(folderRoutes);
   await app.register(photoRoutes);
   await app.register(docRoutes);
+  await app.register(shareLinkRoutes);
   await app.register(shareRoutes);
 
   return app;
