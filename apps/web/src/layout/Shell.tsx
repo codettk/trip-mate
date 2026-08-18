@@ -28,6 +28,7 @@ import { Icon } from "../components/Icon.tsx";
 import { ConfirmModal, Modal } from "../components/Modal.tsx";
 import { Splash } from "../components/Splash.tsx";
 import { InviteModal } from "../modals/InviteModal.tsx";
+import { JoinGroupModal, type GroupBrief } from "../modals/JoinGroupModal.tsx";
 import { NewGroupModal } from "../modals/NewGroupModal.tsx";
 
 /** 파스텔 타일 — 카드·모달 머리에 붙는 아이콘 조각. */
@@ -87,6 +88,11 @@ export function Shell({ groupId }: { groupId: string }) {
 
   const [switcher, setSwitcher] = useState(false);
   const [newGroup, setNewGroup] = useState(false);
+  const [joinGroup, setJoinGroup] = useState(false);
+  // 만들거나 참여한 결과. 지금 보던 모임에서 곧장 튕겨 나가지 않도록 한 번 멈춘다.
+  const [result, setResult] = useState<{ kind: "created" | "joined"; group: GroupBrief } | null>(
+    null,
+  );
   const [invite, setInvite] = useState(false);
   const [logout, setLogout] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
@@ -221,10 +227,47 @@ export function Shell({ groupId }: { groupId: string }) {
           setSwitcher(false);
           setNewGroup(true);
         }}
+        onJoin={() => {
+          setSwitcher(false);
+          setJoinGroup(true);
+        }}
         onClose={() => setSwitcher(false)}
       />
 
-      <NewGroupModal open={newGroup} onClose={() => setNewGroup(false)} />
+      {/* 스위처에서 열었으므로 곧장 이동하지 않고 결과 모달을 거친다 */}
+      <NewGroupModal
+        open={newGroup}
+        onClose={() => setNewGroup(false)}
+        onCreated={(g) => {
+          setNewGroup(false);
+          setResult({ kind: "created", group: g });
+        }}
+      />
+
+      <JoinGroupModal
+        open={joinGroup}
+        onClose={() => setJoinGroup(false)}
+        onJoined={(g) => {
+          setJoinGroup(false);
+          setResult({ kind: "joined", group: g });
+        }}
+      />
+
+      <GroupResultModal
+        open={!!result}
+        kind={result?.kind ?? "created"}
+        group={result?.group ?? null}
+        onGo={(id) => {
+          setResult(null);
+          openGroup(id);
+        }}
+        onClose={() => {
+          // 닫으면 스위처 목록으로 돌아간다 — 방금 만든/참여한 모임이 거기 보여야 한다
+          setResult(null);
+          setSwitcher(true);
+        }}
+      />
+
       <InviteModal open={invite} onClose={() => setInvite(false)} groupId={groupId} />
 
       <ConfirmModal
@@ -252,6 +295,7 @@ function GroupSwitcher({
   loading,
   onPick,
   onNew,
+  onJoin,
   onClose,
 }: {
   open: boolean;
@@ -260,6 +304,7 @@ function GroupSwitcher({
   loading: boolean;
   onPick: (id: string) => void;
   onNew: () => void;
+  onJoin: () => void;
   onClose: () => void;
 }) {
   const qc = useQueryClient();
@@ -300,16 +345,98 @@ function GroupSwitcher({
         </div>
       )}
 
-      <button className="ccard" onClick={onNew}>
-        <Tile c="var(--brand)" bg="var(--brand-soft)" icon="plus" />
-        <b>새 여행 모임</b>
-        <small>제목·여행지·기간을 정하면 일차가 자동으로 생깁니다. 만든 사람이 방장이 됩니다.</small>
-      </button>
+      {/* 만들기와 참여를 나란히 둔다 — 초대를 받은 사람이 시작 페이지까지 돌아갈 이유가 없어야 한다 */}
+      <div className="row2">
+        <button className="ccard" onClick={onNew}>
+          <Tile c="var(--brand)" bg="var(--brand-soft)" icon="plus" />
+          <b>새 여행 모임</b>
+          <small>
+            제목·여행지·기간을 정하면 일차가 자동으로 생깁니다. 만든 사람이 방장이 됩니다.
+          </small>
+        </button>
+
+        <button className="ccard" onClick={onJoin}>
+          <Tile c="var(--brand)" bg="var(--brand-soft)" icon="ticket" />
+          <b>초대 링크로 참여</b>
+          <small>받은 링크를 붙여넣으면 어느 모임인지 확인한 뒤 바로 멤버가 됩니다.</small>
+        </button>
+      </div>
 
       <p className="hint">
         모임마다 멤버·일정·폴더·정산·문서가 완전히 분리됩니다. 모임 제목이 곧 Google Drive 최상위
         폴더 이름입니다.
       </p>
+    </Modal>
+  );
+}
+
+/**
+ * 모임을 만들거나 참여한 직후.
+ *
+ * 곧장 이동해 버리면 "무엇이 만들어졌는지"를 볼 새도 없이 보던 화면이 갈린다.
+ * 여기서 한 번 멈추고, 이동할지 목록으로 돌아갈지 사람이 고른다.
+ */
+function GroupResultModal({
+  open,
+  kind,
+  group,
+  onGo,
+  onClose,
+}: {
+  open: boolean;
+  kind: "created" | "joined";
+  group: GroupBrief | null;
+  onGo: (id: string) => void;
+  onClose: () => void;
+}) {
+  return (
+    <Modal
+      open={open && !!group}
+      title={kind === "joined" ? "모임에 참여했습니다" : "모임을 만들었습니다"}
+      icon="check"
+      onClose={onClose}
+      footer={
+        <>
+          <div className="sp" />
+          <button className="btn btn-ghost" onClick={onClose}>
+            닫기
+          </button>
+          <button className="btn" onClick={() => group && onGo(group.id)}>
+            모임으로 이동
+          </button>
+        </>
+      }
+    >
+      {group ? (
+        <>
+          <div className="lines">
+            <div className="li">
+              <span>
+                <b style={{ fontSize: 14 }}>{group.name}</b>
+                <br />
+                <small style={{ color: "var(--ink-3)", fontSize: 11 }}>
+                  {group.dest}
+                  {group.start && group.end ? ` · ${periodOf(group.start, group.end)}` : ""} · 멤버{" "}
+                  {group.memberCount}명
+                </small>
+              </span>
+            </div>
+          </div>
+
+          <p className="hint">
+            {kind === "joined" ? (
+              <>
+                지금 보던 모임은 그대로 있습니다. 닫으면 모임 목록으로 돌아갑니다.
+              </>
+            ) : (
+              <>
+                제목이 곧 Google Drive 최상위 폴더 이름이고, 일차는 기간에서 자동으로
+                만들어졌습니다. 닫으면 모임 목록으로 돌아갑니다.
+              </>
+            )}
+          </p>
+        </>
+      ) : null}
     </Modal>
   );
 }

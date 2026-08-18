@@ -7,6 +7,11 @@
  *  · 제목이 곧 Google Drive 최상위 폴더 이름이다.
  *
  * 검증 실패는 폼 안에 인라인으로 적는다. 브라우저 대화상자를 쓰지 않는다.
+ *
+ * 만든 다음 어디로 갈지는 **여는 쪽이 정한다** (`onCreated`).
+ *  · 시작 페이지 — 갈 곳이 그 모임뿐이라 곧장 이동한다. 한 번 더 누르게 하는 게 손해다.
+ *  · 사이드바 스위처 — 만든 모임을 보여 주고 "이동 / 닫기"를 고르게 한다.
+ *    지금 보던 모임에서 튕겨 나가면 하던 일이 끊기기 때문이다.
  */
 
 import { useQueryClient } from "@tanstack/react-query";
@@ -18,13 +23,24 @@ import { keys } from "../api/hooks.ts";
 import { ErrorBox, Field } from "../components/Bits.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { Modal } from "../components/Modal.tsx";
+// 결과 모달이 쓰는 최소 정보. 참여 쪽과 같은 모양이라 한 곳(JoinGroupModal)에 두고 가져다 쓴다.
+import type { GroupBrief } from "./JoinGroupModal.tsx";
 
 const EMPTY = { name: "", dest: "", start: "", end: "", memo: "" };
 
 /** 날짜 입력이 아직 반쯤 채워진 상태에서 core 의 날짜 함수가 던지지 않도록 먼저 막는다. */
 const isIso = (s: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(s);
 
-export function NewGroupModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function NewGroupModal({
+  open,
+  onClose,
+  onCreated,
+}: {
+  open: boolean;
+  onClose: () => void;
+  /** 주면 이동하지 않고 만들어진 모임을 넘긴다. 없으면 지금까지처럼 곧장 그 모임으로 간다. */
+  onCreated?: (g: GroupBrief) => void;
+}) {
   const nav = useNavigate();
   const qc = useQueryClient();
 
@@ -74,10 +90,24 @@ export function NewGroupModal({ open, onClose }: { open: boolean; onClose: () =>
         memo: f.memo,
       })
       .then(async (r) => {
+        // 스위처 목록에 방금 만든 모임이 보여야 한다
         await qc.invalidateQueries({ queryKey: keys.groups });
-        localStorage.setItem("tm:lastGroup", r.id);
+        const made = {
+          id: r.id,
+          name: f.name.trim(),
+          dest: f.dest.trim(),
+          start: f.start,
+          end: f.end,
+          memberCount: 1, // 만든 사람 혼자다 — 방장 본인
+        };
         setBusy(false);
         close();
+        if (onCreated) {
+          onCreated(made);
+          return;
+        }
+        // 여는 쪽이 정하지 않았으면 지금까지처럼 곧장 그 모임으로 간다
+        localStorage.setItem("tm:lastGroup", r.id);
         nav(`/g/${r.id}`);
       })
       .catch((e: unknown) => {

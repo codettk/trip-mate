@@ -15,7 +15,16 @@
 
 import { BLOCK_KINDS, BLOCK_LABEL, type BlockKind } from "@tripmate/core";
 import { useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent,
+} from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ApiError, api } from "../api/client.ts";
 import { keys, useDoc, useDocs, useSettlement } from "../api/hooks.ts";
@@ -35,11 +44,36 @@ const KIND_ICON: Record<BlockKind, string> = {
 
 const pad = (n: number): string => String(n).padStart(2, "0");
 
-/** "2026.08.17 14:30". 상대 시간을 쓰면 새로고침마다 값이 흔들려 수정 여부를 헷갈리게 한다. */
+/** "2026.08.17 14:30". 무엇이 최신인지는 절대 시각이 답한다 — 상대 시간만 두면 값이 흔들려 헷갈린다. */
 function when(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
   return `${d.getFullYear()}.${pad(d.getMonth() + 1)}.${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/**
+ * "방금 전" / "3분 전". 절대 시각과 **나란히** 쓴다.
+ * "저장이 됐나?"는 상대 시간이 답하고, "무엇이 최신인가"는 위의 절대 시각이 답한다.
+ */
+function ago(at: number, now: number): string {
+  if (!Number.isFinite(at)) return ""; // 서버 값이 이상해도 "NaN분 전"을 보여 주지 않는다
+  const s = Math.max(0, Math.floor((now - at) / 1000));
+  if (s < 45) return "방금 전";
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}분 전`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}시간 전`;
+  return `${Math.floor(h / 24)}일 전`;
+}
+
+/** 30초마다 다시 그린다 — "방금 전"이 한 시간째 "방금 전"으로 남아 있으면 거짓말이 된다. */
+function useNow(ms = 30_000): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), ms);
+    return () => window.clearInterval(id);
+  }, [ms]);
+  return now;
 }
 
 /* ══════════ content 파싱 ══════════
@@ -94,6 +128,30 @@ const writePins = (pins: Pin[]): Record<string, unknown> => ({
 
 /* ══════════ 저장 ══════════ */
 
+/** 문서 헤더가 보여 주는 저장 상태. 조용히 있으면 "저장이 안 된다"고 오해한다. */
+type SaveState =
+  | { kind: "idle" }
+  | { kind: "pending" } // 디바운스 대기 중 — 아직 서버로 안 나갔다
+  | { kind: "saving" }
+  | { kind: "saved"; at: number }
+  | { kind: "error" };
+
+/**
+ * 블록들의 flush 를 모아 두는 통로.
+ *
+ * 자동 저장은 **걷어내지 않는다** — 작성 중 이탈에 내용이 날아가기 때문이다.
+ * 대신 헤더의 "저장" 버튼이 이 통로로 대기 중인 디바운스를 전부 즉시 밀어 넣는다.
+ * 누를 곳이 있어야 사람이 안심한다.
+ */
+interface SaveBus {
+  /** 블록이 자기 flush 를 등록한다. 반환값은 해제 함수다. */
+  register: (flush: () => void) => () => void;
+  /** 아직 서버로 안 나간 편집이 생겼다는 신호 */
+  pending: () => void;
+}
+
+const SaveBusCtx = createContext<SaveBus | null>(null);
+
 /**
  * 타이핑마다 저장하면 글자 수만큼 요청이 나간다.
  * 600ms 디바운스로 모으고, 포커스를 잃는 순간(blur)과 언마운트에는 즉시 밀어 넣는다 —
@@ -104,6 +162,7 @@ function useDebouncedSave(save: (content: Record<string, unknown>) => void) {
   const pending = useRef<Record<string, unknown> | null>(null);
   const saveRef = useRef(save);
   saveRef.current = save;
+  const bus = useContext(SaveBusCtx);
 
   const flush = useCallback(() => {
     if (timer.current !== null) {
@@ -118,16 +177,53 @@ function useDebouncedSave(save: (content: Record<string, unknown>) => void) {
   const schedule = useCallback(
     (content: Record<string, unknown>) => {
       pending.current = content;
+      bus?.pending(); // 헤더에 "저장 대기 중"을 띄운다 — 타이핑이 허공에 뜬 것처럼 보이면 안 된다
       if (timer.current !== null) window.clearTimeout(timer.current);
       timer.current = window.setTimeout(flush, 600);
     },
-    [flush],
+    [flush, bus],
   );
+
+  // 헤더의 "저장" 버튼이 이 블록의 대기분도 밀어 넣을 수 있게 등록해 둔다
+  useEffect(() => {
+    if (!bus) return;
+    return bus.register(flush);
+  }, [bus, flush]);
 
   // 화면을 떠날 때 남은 초안을 흘리지 않는다
   useEffect(() => () => flush(), [flush]);
 
   return { schedule, flush };
+}
+
+/** 저장 상태 표시. 색 역할: 초록=완료, 노랑=아직 안 끝난 것. */
+function SaveBadge({ state, now }: { state: SaveState; now: number }) {
+  switch (state.kind) {
+    case "pending":
+      return <Badge tone="warn">저장 대기 중…</Badge>;
+    case "saving":
+      return <Badge tone="mute">저장 중…</Badge>;
+    case "saved":
+      return (
+        <Badge tone="ok" icon="check">
+          저장됨 · {ago(state.at, now)}
+        </Badge>
+      );
+    case "error":
+      // app.css 에 `.badge.danger` 가 없고 여기서 스타일을 늘리지 않기로 해서 색만 인라인으로 준다
+      return (
+        <span className="badge" style={{ background: "#FFF1F3", color: "var(--danger)" }}>
+          <Icon name="x" size={12} />
+          저장 실패
+        </span>
+      );
+    case "idle":
+      return (
+        <Badge tone="mute" icon="check">
+          모든 변경이 저장됨
+        </Badge>
+      );
+  }
 }
 
 /* ══════════ 화면 ══════════ */
@@ -348,11 +444,49 @@ function DocDetailView({
   const [err, setErr] = useState<unknown>(null);
   const [delBlock, setDelBlock] = useState<DocBlock | null>(null);
   const [busyBlock, setBusyBlock] = useState(false);
+  const [saveState, setSaveState] = useState<SaveState>({ kind: "idle" });
+  const now = useNow();
+
+  // 블록들이 등록한 flush. 헤더의 "저장" 버튼이 한 번에 밀어 넣는다.
+  const flushes = useRef(new Set<() => void>());
+  const bus = useMemo<SaveBus>(
+    () => ({
+      register: (fn) => {
+        flushes.current.add(fn);
+        return () => {
+          flushes.current.delete(fn);
+        };
+      },
+      pending: () => setSaveState({ kind: "pending" }),
+    }),
+    [],
+  );
+
+  // 문서가 바뀌면 앞 문서의 저장 상태를 물고 오지 않는다
+  useEffect(() => setSaveState({ kind: "idle" }), [did]);
 
   const refresh = useCallback(() => {
     void qc.invalidateQueries({ queryKey: keys.doc(gid, did) });
     onTouched();
   }, [qc, gid, did, onTouched]);
+
+  /**
+   * 서버로 나가는 모든 변경이 같은 표시를 쓴다 — 무엇을 고쳤든 사람이 궁금한 건 "저장됐나" 하나다.
+   * (에러는 다시 던져서 기존 catch 들이 그대로 처리하게 둔다.)
+   */
+  const track = useCallback(<T,>(p: Promise<T>): Promise<T> => {
+    setSaveState({ kind: "saving" });
+    return p.then(
+      (r) => {
+        setSaveState({ kind: "saved", at: Date.now() });
+        return r;
+      },
+      (e: unknown) => {
+        setSaveState({ kind: "error" });
+        throw e;
+      },
+    );
+  }, []);
 
   const status = q.error instanceof ApiError ? q.error.status : 0;
   if (status === 404) {
@@ -369,8 +503,7 @@ function DocDetailView({
     setEditing(false);
     if (!t || t === doc.title) return;
     setErr(null);
-    api
-      .patch(`/api/groups/${gid}/docs/${did}`, { title: t, version: doc.version })
+    track(api.patch(`/api/groups/${gid}/docs/${did}`, { title: t, version: doc.version }))
       .then(() => {
         setConflict(false);
         refresh();
@@ -386,6 +519,8 @@ function DocDetailView({
             refresh();
           }
           setConflict(true);
+          // 서버가 거절한 게 아니라 "남이 먼저 저장했다"는 뜻이다. 저장 실패로 겁주지 않고 안내로 넘긴다.
+          setSaveState({ kind: "idle" });
           return;
         }
         setErr(e);
@@ -394,8 +529,7 @@ function DocDetailView({
 
   const addBlock = (kind: BlockKind) => {
     setErr(null);
-    api
-      .post(`/api/groups/${gid}/docs/${did}/blocks`, { kind })
+    track(api.post(`/api/groups/${gid}/docs/${did}/blocks`, { kind }))
       .then(refresh)
       .catch((e: unknown) => setErr(e));
   };
@@ -405,8 +539,7 @@ function DocDetailView({
     const at = from + delta;
     if (at < 0 || at >= blocks.length) return;
     setErr(null);
-    api
-      .patch(`/api/groups/${gid}/docs/${did}/blocks/${b.id}`, { position: at })
+    track(api.patch(`/api/groups/${gid}/docs/${did}/blocks/${b.id}`, { position: at }))
       .then(refresh)
       .catch((e: unknown) => setErr(e));
   };
@@ -414,8 +547,7 @@ function DocDetailView({
   const removeBlock = () => {
     if (!delBlock) return;
     setBusyBlock(true);
-    api
-      .del(`/api/groups/${gid}/docs/${did}/blocks/${delBlock.id}`)
+    track(api.del(`/api/groups/${gid}/docs/${did}/blocks/${delBlock.id}`))
       .then(() => {
         setDelBlock(null);
         refresh();
@@ -426,150 +558,177 @@ function DocDetailView({
 
   const saveContent = (bid: string, content: Record<string, unknown>) => {
     setErr(null);
-    api
-      .patch(`/api/groups/${gid}/docs/${did}/blocks/${bid}`, { content })
+    track(api.patch(`/api/groups/${gid}/docs/${did}/blocks/${bid}`, { content }))
       .then(refresh)
       .catch((e: unknown) => setErr(e));
   };
 
+  /**
+   * 헤더의 "저장" 버튼.
+   * 대기 중인 디바운스를 전부 즉시 밀어 넣는다. 밀어 넣을 게 없으면 서버 상태를 다시 받아
+   * "저장됨"을 확인시켜 준다 — 아무 반응도 없으면 눌렀는지조차 알 수 없다.
+   */
+  const saveNow = () => {
+    const waiting = saveState.kind === "pending";
+    for (const f of [...flushes.current]) f();
+    if (!waiting) {
+      setSaveState({ kind: "saved", at: Date.now() });
+      refresh();
+    }
+  };
+
   return (
-    <div className="doc">
-      <div className="docbar">
-        {/* 문서에는 외부 공유 버튼이 없다. 자물쇠 배지로 "여기까지가 모임 안"임을 분명히 한다. */}
-        <Badge tone="mute" icon="lock">
-          모임 멤버 전용
-        </Badge>
-        <button className="btn btn-danger btn-sm" style={{ marginLeft: "auto" }} onClick={onAskDelete}>
-          문서 삭제
-        </button>
-      </div>
-
-      {editing ? (
-        <input
-          className="doctitle"
-          autoFocus
-          value={draft}
-          maxLength={80}
-          aria-label="문서 제목"
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={saveTitle}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") e.currentTarget.blur();
-            if (e.key === "Escape") {
-              setDraft(doc.title);
-              setEditing(false);
-            }
-          }}
-        />
-      ) : (
-        <button
-          className="doctitle"
-          style={{ textAlign: "left", cursor: "text" }}
-          title="클릭하면 제목을 고칠 수 있습니다"
-          onClick={() => {
-            setDraft(doc.title);
-            setEditing(true);
-          }}
-        >
-          {doc.title}
-        </button>
-      )}
-
-      <div className="docmeta">
-        {when(doc.updatedAt)} 수정 · 블록 {blocks.length} · 외부로 공유되지 않습니다
-      </div>
-
-      {conflict ? (
-        <div className="tip warn" style={{ marginBottom: 14 }}>
-          <Icon name="bulb" size={15} />
-          <span>
-            다른 사람이 먼저 저장했습니다. 위에 보이는 내용이 <b>지금 서버에 있는 최신 문서</b>
-            입니다. 다시 고쳐서 저장해 주세요.
-          </span>
-        </div>
-      ) : null}
-
-      {err ? (
-        <div style={{ marginBottom: 14 }}>
-          <ErrorBox error={err} />
-        </div>
-      ) : null}
-
-      {blocks.map((b, i) => (
-        <section className="block" key={b.id}>
-          <div className="bhead">
-            <span className="kind">{BLOCK_LABEL[b.kind]}</span>
-            <Icon name={KIND_ICON[b.kind]} size={15} />
-            <h5>{BLOCK_LABEL[b.kind]} 블록</h5>
-            <div style={{ marginLeft: "auto", display: "flex", gap: 4, alignItems: "center" }}>
-              <button
-                className="del"
-                aria-label="위로"
-                disabled={i === 0}
-                style={i === 0 ? { opacity: 0.35, cursor: "default" } : undefined}
-                onClick={() => move(b, i, -1)}
-              >
-                <Icon name="up" size={14} />
-              </button>
-              <button
-                className="del"
-                aria-label="아래로"
-                disabled={i === blocks.length - 1}
-                style={
-                  i === blocks.length - 1 ? { opacity: 0.35, cursor: "default" } : undefined
-                }
-                onClick={() => move(b, i, 1)}
-              >
-                <span style={{ display: "inline-flex", transform: "rotate(180deg)" }}>
-                  <Icon name="up" size={14} />
-                </span>
-              </button>
-              <button className="del" onClick={() => setDelBlock(b)}>
-                삭제
-              </button>
-            </div>
-          </div>
-          <BlockBody
-            key={b.id}
-            gid={gid}
-            block={b}
-            onSave={(c) => saveContent(b.id, c)}
-          />
-        </section>
-      ))}
-
-      <div className="addblock">
-        <span className="lb">블록 추가</span>
-        {BLOCK_KINDS.map((k) => (
-          <button key={k} className="btn btn-ghost btn-sm" onClick={() => addBlock(k)}>
-            <Icon name={KIND_ICON[k]} size={14} />
-            {BLOCK_LABEL[k]}
+    <SaveBusCtx.Provider value={bus}>
+      <div className="doc">
+        <div className="docbar">
+          {/* 문서에는 외부 공유 버튼이 없다. 자물쇠 배지로 "여기까지가 모임 안"임을 분명히 한다. */}
+          <Badge tone="mute" icon="lock">
+            모임 멤버 전용
+          </Badge>
+          {/* 자동 저장은 그대로 두되 상태를 드러낸다 — 조용하면 "저장이 안 된다"고 오해한다 */}
+          <SaveBadge state={saveState} now={now} />
+          <button
+            className="btn btn-sm"
+            style={{ marginLeft: "auto" }}
+            onClick={saveNow}
+            disabled={saveState.kind === "saving"}
+          >
+            {saveState.kind === "saving" ? "저장 중…" : "저장"}
           </button>
+          <button className="btn btn-danger btn-sm" onClick={onAskDelete}>
+            문서 삭제
+          </button>
+        </div>
+
+        {editing ? (
+          <input
+            className="doctitle"
+            autoFocus
+            value={draft}
+            maxLength={80}
+            aria-label="문서 제목"
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={saveTitle}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") e.currentTarget.blur();
+              if (e.key === "Escape") {
+                setDraft(doc.title);
+                setEditing(false);
+              }
+            }}
+          />
+        ) : (
+          <button
+            className="doctitle"
+            style={{ textAlign: "left", cursor: "text" }}
+            title="클릭하면 제목을 고칠 수 있습니다"
+            onClick={() => {
+              setDraft(doc.title);
+              setEditing(true);
+            }}
+          >
+            {doc.title}
+          </button>
+        )}
+
+        <div className="docmeta">
+          {/* 절대 시각(무엇이 최신인가) + 상대 시간(방금 저장됐나)을 나란히 둔다 */}
+          {when(doc.updatedAt)} 수정 · {ago(new Date(doc.updatedAt).getTime(), now)} · 블록{" "}
+          {blocks.length} · 외부로 공유되지 않습니다
+        </div>
+
+        {conflict ? (
+          <div className="tip warn" style={{ marginBottom: 14 }}>
+            <Icon name="bulb" size={15} />
+            <span>
+              다른 사람이 먼저 저장했습니다. 위에 보이는 내용이 <b>지금 서버에 있는 최신 문서</b>
+              입니다. 다시 고쳐서 저장해 주세요.
+            </span>
+          </div>
+        ) : null}
+
+        {err ? (
+          <div style={{ marginBottom: 14 }}>
+            <ErrorBox error={err} />
+          </div>
+        ) : null}
+
+        {blocks.map((b, i) => (
+          <section className="block" key={b.id}>
+            <div className="bhead">
+              <span className="kind">{BLOCK_LABEL[b.kind]}</span>
+              <Icon name={KIND_ICON[b.kind]} size={15} />
+              <h5>{BLOCK_LABEL[b.kind]} 블록</h5>
+              <div style={{ marginLeft: "auto", display: "flex", gap: 4, alignItems: "center" }}>
+                <button
+                  className="del"
+                  aria-label="위로"
+                  disabled={i === 0}
+                  style={i === 0 ? { opacity: 0.35, cursor: "default" } : undefined}
+                  onClick={() => move(b, i, -1)}
+                >
+                  <Icon name="up" size={14} />
+                </button>
+                <button
+                  className="del"
+                  aria-label="아래로"
+                  disabled={i === blocks.length - 1}
+                  style={
+                    i === blocks.length - 1 ? { opacity: 0.35, cursor: "default" } : undefined
+                  }
+                  onClick={() => move(b, i, 1)}
+                >
+                  <span style={{ display: "inline-flex", transform: "rotate(180deg)" }}>
+                    <Icon name="up" size={14} />
+                  </span>
+                </button>
+                <button className="del" onClick={() => setDelBlock(b)}>
+                  삭제
+                </button>
+              </div>
+            </div>
+            <BlockBody
+              key={b.id}
+              gid={gid}
+              block={b}
+              onSave={(c) => saveContent(b.id, c)}
+            />
+          </section>
         ))}
+
+        <div className="addblock">
+          <span className="lb">블록 추가</span>
+          {BLOCK_KINDS.map((k) => (
+            <button key={k} className="btn btn-ghost btn-sm" onClick={() => addBlock(k)}>
+              <Icon name={KIND_ICON[k]} size={14} />
+              {BLOCK_LABEL[k]}
+            </button>
+          ))}
+        </div>
+
+        {blocks.length === 0 ? (
+          <p className="hint" style={{ marginTop: 12 }}>
+            아직 블록이 없습니다. 시간표·지도·숙소·정산서·메모를 얹어 문서를 채워 보세요.
+          </p>
+        ) : null}
+
+        <ConfirmModal
+          open={!!delBlock}
+          title="블록 삭제"
+          message={
+            <>
+              <b>{delBlock ? BLOCK_LABEL[delBlock.kind] : ""}</b> 블록을 삭제합니다. 되돌릴 수
+              없습니다.
+            </>
+          }
+          confirmLabel="삭제"
+          danger
+          busy={busyBlock}
+          onConfirm={removeBlock}
+          onClose={() => setDelBlock(null)}
+        />
       </div>
-
-      {blocks.length === 0 ? (
-        <p className="hint" style={{ marginTop: 12 }}>
-          아직 블록이 없습니다. 시간표·지도·숙소·정산서·메모를 얹어 문서를 채워 보세요.
-        </p>
-      ) : null}
-
-      <ConfirmModal
-        open={!!delBlock}
-        title="블록 삭제"
-        message={
-          <>
-            <b>{delBlock ? BLOCK_LABEL[delBlock.kind] : ""}</b> 블록을 삭제합니다. 되돌릴 수
-            없습니다.
-          </>
-        }
-        confirmLabel="삭제"
-        danger
-        busy={busyBlock}
-        onConfirm={removeBlock}
-        onClose={() => setDelBlock(null)}
-      />
-    </div>
+    </SaveBusCtx.Provider>
   );
 }
 
@@ -859,9 +1018,19 @@ function SettleBlock({ gid }: { gid: string }) {
 
   return (
     <>
-      <p className="memo" style={{ fontSize: 12, marginBottom: 10 }}>
-        정산 화면과 같은 계산을 그때그때 다시 불러옵니다 — 문서에 금액을 굳혀 두지 않습니다.
-      </p>
+      {/*
+        "저장이 안 된다"는 오해가 여기서 나왔다. 이 블록만 있는 문서는 채울 칸이 없어서
+        빈 화면처럼 보이기 때문이다. 왜 비어 있는지를 블록 안에서 말한다.
+      */}
+      <div className="tip" style={{ marginBottom: 12 }}>
+        <Icon name="bulb" size={15} />
+        <span>
+          이 블록은 <b>일부러 아무 수치도 저장하지 않습니다.</b> 결제자나 정산 대상이 바뀌면 적어
+          둔 숫자가 곧바로 거짓이 되기 때문이고, 서버도 이 블록의 content 저장을 거부합니다. 대신
+          정산 화면과 같은 계산을 그때그때 다시 불러옵니다. 그래서 편집할 칸이 없는 게 정상이며,
+          이 블록만 있는 문서가 비어 보이는 것도 저장이 안 된 것이 아닙니다.
+        </span>
+      </div>
 
       <div className="sumbox" style={{ marginBottom: 12 }}>
         <div>

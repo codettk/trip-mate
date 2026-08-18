@@ -16,7 +16,7 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { currencyOf, tripLength } from "@tripmate/core";
+import { CURRENCY_CODES, currencyOf, tripLength } from "@tripmate/core";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ApiError, api } from "../api/client.ts";
@@ -32,6 +32,8 @@ interface GroupForm {
   start: string;
   end: string;
   memo: string;
+  /** 기본 통화. 새 지출의 기본값일 뿐이라 바꿔도 기존 항목에는 소급되지 않는다. */
+  cur: string;
 }
 
 interface Health {
@@ -74,7 +76,14 @@ export function SettingsScreen() {
   const myMemberId = group.data?.me.memberId ?? "";
 
   /* ── 모임 정보 폼 ── */
-  const [form, setForm] = useState<GroupForm>({ name: "", dest: "", start: "", end: "", memo: "" });
+  const [form, setForm] = useState<GroupForm>({
+    name: "",
+    dest: "",
+    start: "",
+    end: "",
+    memo: "",
+    cur: "KRW",
+  });
   const [saved, setSaved] = useState(false);
   const loaded = useRef<string | null>(null);
 
@@ -83,7 +92,7 @@ export function SettingsScreen() {
     // 서버가 다시 fetch 될 때마다 입력을 덮어쓰면 타이핑이 사라진다. 모임이 바뀔 때만 채운다.
     if (g && loaded.current !== g.id) {
       loaded.current = g.id;
-      setForm({ name: g.name, dest: g.dest, start: g.start, end: g.end, memo: g.memo });
+      setForm({ name: g.name, dest: g.dest, start: g.start, end: g.end, memo: g.memo, cur: g.cur });
     }
   }, [group.data]);
 
@@ -204,6 +213,29 @@ export function SettingsScreen() {
               />
             </Field>
 
+            {/* 기본 통화는 모임 정보의 일부다 — 여기만 멤버에게 열면 "모임 정보는 방장만" 규칙이 깨진다 */}
+            <Field
+              label="기본 통화"
+              hint={
+                <>
+                  바꿔도 <b>기존 지출은 바뀌지 않습니다</b> — 항목마다 결제한 통화와 저장 시점의
+                  환율 스냅샷을 그대로 들고 있기 때문입니다. 새로 추가하는 지출의 기본값만
+                  달라집니다.
+                </>
+              }
+            >
+              <select
+                value={form.cur}
+                onChange={(e) => setForm({ ...form, cur: e.target.value })}
+              >
+                {CURRENCY_CODES.map((c) => (
+                  <option key={c} value={c}>
+                    {currencyOf(c).sym} {c} · {currencyOf(c).name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+
             <div className="row2">
               <Field label="시작일">
                 <input
@@ -265,7 +297,14 @@ export function SettingsScreen() {
                 onClick={() => {
                   setSaved(false);
                   save.reset();
-                  setForm({ name: g.name, dest: g.dest, start: g.start, end: g.end, memo: g.memo });
+                  setForm({
+                    name: g.name,
+                    dest: g.dest,
+                    start: g.start,
+                    end: g.end,
+                    memo: g.memo,
+                    cur: g.cur,
+                  });
                 }}
               >
                 되돌리기
@@ -301,17 +340,22 @@ export function SettingsScreen() {
           </div>
         )}
 
-        <div className="lines" style={{ marginTop: 12 }}>
-          <div className="li">
-            <span>기본 통화</span>
-            <span className="v" style={{ fontWeight: 500 }}>
-              {g.cur} · {currencyOf(g.cur).name}
-            </span>
+        {/* 방장은 위 폼에서 셀렉트로 바꾼다. 멤버에게는 읽기 전용으로 두고 이유를 적는다. */}
+        {isOwner ? null : (
+          <div className="lines" style={{ marginTop: 12 }}>
+            <div className="li">
+              <span>기본 통화</span>
+              <span className="v" style={{ fontWeight: 500, display: "flex", gap: 6, alignItems: "center" }}>
+                {currencyOf(g.cur).sym} {g.cur} · {currencyOf(g.cur).name}
+                <Badge tone="mute">방장만 변경</Badge>
+              </span>
+            </div>
           </div>
-        </div>
+        )}
         <p className="hint" style={{ marginTop: 6 }}>
           기본 통화는 새 지출의 기본값일 뿐입니다. 항목마다 결제한 통화 그대로 입력하고, 원화 환산은
-          그 항목 일자의 마감 환율로 고정됩니다.
+          그 항목 일자의 마감 환율로 고정됩니다. 그래서 기본 통화를 바꿔도{" "}
+          <b>이미 저장된 지출의 금액·환산액·정산 결과는 그대로입니다.</b>
         </p>
       </div>
 
