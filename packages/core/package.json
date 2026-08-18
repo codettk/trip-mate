@@ -1,0 +1,27 @@
+{
+  "name": "@tripmate/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "서버와 브라우저가 같은 코드로 돌려야 하는 것들 — 정산 알고리즘 · 통화 · 일차 계산 · 슬러그",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  }
+}
