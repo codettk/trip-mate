@@ -1,0 +1,22 @@
+# 줄바꿈은 저장소 안에서도 체크아웃한 뒤에도 항상 LF 다.
+# 이 머신의 core.autocrlf=true 가 체크아웃할 때 CRLF 를 쓰는 걸 여기서 덮는다 —
+# .gitattributes 는 저장소를 따라다니므로 누가 어디서 클론해도 같은 바이트가 나온다.
+* text=auto eol=lf
+
+# Pencil 디자인 파일은 손대지 않는다.
+# 겉은 JSON 이지만 내용이 암호화돼 있어 한 바이트라도 바뀌면 편집기가 열지 못한다.
+*.pen -text
+
+# 바이너리
+*.png  -text
+*.jpg  -text
+*.jpeg -text
+*.gif  -text
+*.webp -text
+*.ico  -text
+*.pdf  -text
+*.woff -text
+*.woff2 -text
+
+# 락 파일은 diff 를 접어 둔다 — 리뷰에서 읽을 일이 없다.
+package-lock.json -diff linguist-generated
