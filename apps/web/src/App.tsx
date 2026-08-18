@@ -67,8 +67,15 @@ export function App() {
         <Route path="settings" element={<SettingsScreen />} />
       </Route>
 
-      {/* 공개 뷰어 — 로그인하지 않는다. 셸도 사이드바도 없다. */}
-      <Route path="/:gid/view/:slug" element={<FolderViewerScreen />} />
+      {/*
+        공개 뷰어 — 로그인하지 않는다. 셸도 사이드바도 없다.
+
+        공유 단위가 폴더에서 묶음으로 바뀌면서 주소가 `/{gid}/view/{token}` 이 됐다.
+        옛 주소 `/{gid}/view/{slug}?t={token}` 은 **경로 모양이 똑같아서** 같은 라우트가 받고,
+        `?t=` 가 있는지로 화면이 갈라 처리한다. 이미 뿌려 둔 링크가 죽으면 안 된다.
+      */}
+      <Route path="/:gid/view/:token" element={<FolderViewerScreen />} />
+      <Route path="/:gid/view/:token/:slug" element={<FolderViewerScreen />} />
       <Route path="/:gid/settle/:token" element={<SettleViewerScreen />} />
 
       <Route path="*" element={<Navigate to="/" replace />} />

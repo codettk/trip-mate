@@ -21,6 +21,7 @@ import { api } from "../../api/client.ts";
 import { Won } from "../../components/Bits.tsx";
 import { Icon } from "../../components/Icon.tsx";
 import { Splash } from "../../components/Splash.tsx";
+import { ViewerHeader } from "./ViewerHeader.tsx";
 
 /** 밖으로 나가는 잔액 한 줄. 멤버 id 는 들어 있지 않다. */
 interface ViewBalance {
@@ -76,7 +77,9 @@ function StateChip({ state }: { state: TransferState }) {
 
 function Expired() {
   return (
-    <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: 24 }}>
+    <div style={{ minHeight: "100vh", background: "var(--app)" }}>
+      <ViewerHeader />
+      <div style={{ display: "grid", placeItems: "center", padding: 24, minHeight: "70vh" }}>
       <div className="card" style={{ maxWidth: 420, textAlign: "center", padding: 28 }}>
         <span
           className="tile"
@@ -91,6 +94,7 @@ function Expired() {
           정산 링크가 다시 발급되면 이전 링크는 사용할 수 없습니다. 링크를 준 분에게 다시
           요청해 주세요.
         </p>
+      </div>
       </div>
     </div>
   );
@@ -126,16 +130,11 @@ export function SettleViewerScreen() {
 
   return (
     <div style={{ minHeight: "100vh", background: "var(--app)" }}>
+      <ViewerHeader />
       <header
         className="apphead"
         style={{ position: "static", background: "var(--surface)", padding: "18px 26px" }}
       >
-        <div className="logo" style={{ padding: 0, fontSize: 15 }}>
-          <span className="mk">
-            <Icon name="plane" />
-          </span>
-          TripMate
-        </div>
         <div style={{ minWidth: 0 }}>
           <h1 style={{ fontSize: 18 }}>{group.name}</h1>
           <div className="dates">
