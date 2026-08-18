@@ -71,8 +71,7 @@ export async function createGroup(input: CreateGroupInput): Promise<string> {
         parent_id: null,
         name: input.name,
         slug: slugify(input.name),
-        pub: false,
-        share_token: null,
+        // 공유는 폴더가 아니라 share_links 에 붙는다. 루트도 묶음에 담을 수 있다.
         created_by: input.ownerId,
       })
       .execute();

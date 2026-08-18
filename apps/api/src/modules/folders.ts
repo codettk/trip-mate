@@ -4,18 +4,16 @@
  * 사진 화면은 앨범 목록이 아니라 **폴더 탐색기**다. 멤버가 자유롭게 폴더를 만들고
  * **중첩 깊이에 제한이 없다.** 폴더별 권한도 없다 — 멤버는 모임 안의 모든 폴더를 그대로 본다.
  *
- * ⚠ 공유는 TripMate 가 관리한다. Drive 공유 링크를 밖으로 내보내지 않는다.
- *   응답에 drive_folder_id 를 절대 담지 않고, 밖으로 나가는 주소는 tripmate 뷰어 URL 하나뿐이다.
- *   비공개로 되돌리면 링크는 즉시 죽고, 다시 공개하면 새 토큰이 발급된다(services/folders.ts).
+ * ⚠ 공유는 TripMate 가 관리하고, 단위는 폴더가 아니라 **묶음**이다(modules/shares.ts).
+ *   그래서 여기에는 공개 토글이 없다. 폴더가 밖으로 나가는지는 `sharedIn`(담고 있는 묶음 id)으로만 말한다.
+ *   응답에 drive_folder_id 를 절대 담지 않는다 — Drive 링크는 어떤 경로로도 브라우저에 가지 않는다.
  */
 
-import { viewerPath } from "@tripmate/core";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireMember } from "../auth/membership.ts";
 import { requireAuth } from "../auth/session.ts";
 import { db } from "../db/client.ts";
-import { env } from "../env.ts";
 import { badRequest, conflict } from "../lib/http.ts";
 import {
   breadcrumb,
@@ -24,35 +22,29 @@ import {
   descendantIds,
   folderOrThrow,
   folderTree,
+  moveFolder,
   renameFolder,
-  setFolderPublic,
   type FolderRow,
 } from "../services/folders.ts";
+import { sharedInMap } from "../services/shares.ts";
 import { PHOTO_COLUMNS, photoView, takenTime } from "./photos.ts";
 
 /**
  * 밖으로 나가는 폴더 모양. drive_folder_id 는 여기에 들어오지 않는다.
- * shareUrl 은 공개일 때만 존재한다 — 비공개면 null 이고, 그 순간 예전 링크는 죽는다.
+ * `sharedIn` 이 비어 있지 않으면 그 폴더의 미디어가 밖으로 나가는 중이다.
  */
 interface FolderView {
   id: string;
   name: string;
   slug: string;
-  pub: boolean;
-  shareUrl: string | null;
+  sharedIn: string[];
 }
 
-function shareUrlOf(f: FolderRow): string | null {
-  if (!f.pub || !f.share_token) return null;
-  return env.APP_ORIGIN + viewerPath(f.group_id, f.slug, f.share_token);
-}
-
-const folderView = (f: FolderRow): FolderView => ({
+const folderView = (f: FolderRow, shared: Map<string, string[]>): FolderView => ({
   id: f.id,
   name: f.name,
   slug: f.slug,
-  pub: f.pub,
-  shareUrl: shareUrlOf(f),
+  sharedIn: shared.get(f.id) ?? [],
 });
 
 const gidParams = z.object({ gid: z.string().uuid() });
@@ -81,10 +73,11 @@ export async function folderRoutes(app: FastifyInstance): Promise<void> {
 
     const folder = await folderOrThrow(gid, fid);
     const crumbs = await breadcrumb(gid, fid);
+    const shared = await sharedInMap(gid);
 
     const childRows = await db
       .selectFrom("folders")
-      .select(["id", "group_id", "parent_id", "name", "slug", "pub", "share_token", "drive_folder_id"])
+      .select(["id", "name", "slug"])
       .where("group_id", "=", gid)
       .where("parent_id", "=", fid)
       .orderBy("created_at", "asc")
@@ -103,7 +96,7 @@ export async function folderRoutes(app: FastifyInstance): Promise<void> {
 
     const rows = await db
       .selectFrom("photos")
-      .select([...PHOTO_COLUMNS])
+      .select(PHOTO_COLUMNS)
       .where("folder_id", "=", fid)
       .orderBy("uploaded_at", "asc")
       .orderBy("id", "asc")
@@ -113,13 +106,13 @@ export async function folderRoutes(app: FastifyInstance): Promise<void> {
     if (sort === "taken") rows.sort((a, b) => takenTime(a) - takenTime(b));
 
     return {
-      folder: folderView(folder),
+      folder: folderView(folder, shared),
       breadcrumb: crumbs.map((c) => ({ id: c.id, name: c.name, slug: c.slug })),
       children: childRows.map((c) => ({
         id: c.id,
         name: c.name,
         slug: c.slug,
-        pub: c.pub,
+        sharedIn: shared.get(c.id) ?? [],
         photoCount: countBy.get(c.id) ?? 0,
       })),
       photos: rows.map(photoView),
@@ -142,43 +135,34 @@ export async function folderRoutes(app: FastifyInstance): Promise<void> {
       name: body.data.name,
       userId: user.id,
     });
-    return { folder: folderView(created) };
+    // 갓 만든 폴더는 어느 묶음에도 없다… 단, includeDescendants 묶음 **아래**에 만들었다면
+    // 태어나자마자 밖으로 나간다. 그래서 계산해서 알려 준다 — 모르고 새는 경로가 없어야 한다.
+    return { folder: folderView(created, await sharedInMap(gid)) };
   });
 
-  /** 이름 변경. 루트는 모임 이름을 바꿔야 바뀐다 (services 가 막는다). */
+  /**
+   * 이름 변경 · 이동. 둘 다 그 자리(인라인)에서 하는 조작이라 한 라우트로 받는다.
+   * 루트 이름은 모임 이름을 바꿔야 바뀌고, 루트는 옮길 수 없다 (services 가 막는다).
+   */
   app.patch("/api/groups/:gid/folders/:fid", async (req) => {
     const user = await requireAuth(req);
     const { gid, fid } = gidFidParams.parse(req.params);
     await requireMember(user, gid);
 
-    const body = z.object({ name: nameSchema }).safeParse(req.body);
+    const body = z
+      .object({ name: nameSchema.optional(), parentId: z.string().uuid().optional() })
+      .safeParse(req.body);
     if (!body.success) throw badRequest(body.error.issues[0]?.message ?? "입력값이 올바르지 않습니다");
-
-    return { folder: folderView(await renameFolder(gid, fid, body.data.name)) };
-  });
-
-  /**
-   * 공개/비공개 토글.
-   * 공개할 때마다 새 토큰이 나오므로 예전에 뿌린 링크는 되살아나지 않는다.
-   */
-  app.put("/api/groups/:gid/folders/:fid/public", async (req) => {
-    const user = await requireAuth(req);
-    const { gid, fid } = gidFidParams.parse(req.params);
-    await requireMember(user, gid);
-
-    const body = z.object({ pub: z.boolean() }).safeParse(req.body);
-    if (!body.success) throw badRequest("pub 은 true 또는 false 여야 합니다");
-
-    const target = await folderOrThrow(gid, fid);
-    // 루트를 공개하면 모임의 모든 사진이 링크 하나로 나간다. 공유 단위는 항상 하위 폴더다.
-    if (body.data.pub && target.parent_id === null) {
-      throw badRequest(
-        "최상위 폴더는 공개할 수 없습니다 — 모임의 사진 전부가 링크 하나로 나갑니다. 공유할 하위 폴더를 만들어 그 폴더를 공개하세요.",
-      );
+    if (body.data.name === undefined && body.data.parentId === undefined) {
+      throw badRequest("바꿀 값이 없습니다");
     }
 
-    const updated = await setFolderPublic(gid, fid, body.data.pub);
-    return { folder: folderView(updated), shareUrl: shareUrlOf(updated) };
+    let folder = await folderOrThrow(gid, fid);
+    // 이동을 먼저 한다. 이름만 바뀌고 이동이 400 으로 막히면 화면과 DB 가 어긋나기 때문이다.
+    if (body.data.parentId !== undefined) folder = await moveFolder(gid, fid, body.data.parentId);
+    if (body.data.name !== undefined) folder = await renameFolder(gid, fid, body.data.name);
+
+    return { folder: folderView(folder, await sharedInMap(gid)) };
   });
 
   /**

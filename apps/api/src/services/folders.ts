@@ -1,20 +1,21 @@
 /**
  * 폴더 서비스.
  *
- * 공유 규칙 (CLAUDE.md 확정):
+ * 공유 규칙 (CLAUDE.md 확정 + 2026-08-18 묶음 재설계):
  *  · 모임 멤버는 모든 폴더를 그대로 본다. 폴더별 권한 설정이 없다.
- *  · 모임 밖 사람은 공개된 그 폴더의 미디어만 보는 뷰어 전용 링크를 받는다.
- *    하위·다른 폴더 이동 불가, 업로드·삭제 불가.
- *  · 폴더마다 공개/비공개 토글이 있고 기본값은 비공개.
+ *  · 모임 밖 사람은 **공유 묶음**에 담긴 폴더의 미디어만 보는 뷰어 전용 링크를 받는다.
+ *  · 공유는 더 이상 폴더 행에 붙지 않는다 — `share_links` 가 정본이다(services/shares.ts).
+ *    그래서 이 파일에는 pub / share_token 이 등장하지 않는다. 권한 규칙을 두 군데 두지 않는다.
  *
- * ⚠ 공유 링크를 폴더 ID 에서 파생시키지 말 것.
- *   비공개로 되돌리면 링크가 즉시 죽어야 하고, 다시 공개하면 새 토큰이 나와야 한다.
+ * ⚠ 폴더를 옮길 때의 판정도 core 의 `canMoveFolder` 한 벌만 쓴다.
+ *   자기 자손 밑으로 들어가면 트리가 고리가 되어 resolveShared 가 끝나지 않는다.
  */
 
-import { randomToken, uniqueSlug, type FolderNode } from "@tripmate/core";
+import { canMoveFolder, uniqueSlug } from "@tripmate/core";
 import { db } from "../db/client.ts";
 import { badRequest, notFound } from "../lib/http.ts";
 import { storage } from "../storage/index.ts";
+import { groupFolders, sharedInMap } from "./shares.ts";
 
 export interface FolderRow {
   id: string;
@@ -22,15 +23,32 @@ export interface FolderRow {
   parent_id: string | null;
   name: string;
   slug: string;
-  pub: boolean;
-  share_token: string | null;
   drive_folder_id: string | null;
+}
+
+/** 어디서 폴더를 읽든 같은 컬럼만 뽑는다 — 여기에 없는 값은 밖으로도 나가지 않는다. */
+const FOLDER_COLUMNS = ["id", "group_id", "parent_id", "name", "slug", "drive_folder_id"] as const;
+
+/**
+ * 폴더 트리 노드.
+ * `pub`/`token` 대신 `sharedIn` 이다 — 폴더 하나가 여러 묶음에 동시에 들어갈 수 있어서
+ * 참·거짓으로는 "어느 링크로 나가는지"를 말할 수 없다.
+ */
+export interface FolderTreeNode {
+  id: string;
+  name: string;
+  slug: string;
+  parentId: string | null;
+  photoCount: number;
+  /** 이 폴더를 담고 있는 묶음 id 들. 비어 있으면 밖으로 나가지 않는다 */
+  sharedIn: string[];
+  children: FolderTreeNode[];
 }
 
 export async function rootFolder(groupId: string): Promise<FolderRow> {
   const row = await db
     .selectFrom("folders")
-    .select(["id", "group_id", "parent_id", "name", "slug", "pub", "share_token", "drive_folder_id"])
+    .select(FOLDER_COLUMNS)
     .where("group_id", "=", groupId)
     .where("parent_id", "is", null)
     .executeTakeFirst();
@@ -41,7 +59,7 @@ export async function rootFolder(groupId: string): Promise<FolderRow> {
 export async function folderOrThrow(groupId: string, folderId: string): Promise<FolderRow> {
   const row = await db
     .selectFrom("folders")
-    .select(["id", "group_id", "parent_id", "name", "slug", "pub", "share_token", "drive_folder_id"])
+    .select(FOLDER_COLUMNS)
     .where("id", "=", folderId)
     .where("group_id", "=", groupId)
     .executeTakeFirst();
@@ -50,10 +68,10 @@ export async function folderOrThrow(groupId: string, folderId: string): Promise<
 }
 
 /** 모임의 전체 폴더 트리. 깊이 제한이 없으므로 한 번에 읽어 메모리에서 조립한다. */
-export async function folderTree(groupId: string): Promise<FolderNode> {
+export async function folderTree(groupId: string): Promise<FolderTreeNode> {
   const rows = await db
     .selectFrom("folders")
-    .select(["id", "parent_id", "name", "slug", "pub", "share_token"])
+    .select(["id", "parent_id", "name", "slug"])
     .where("group_id", "=", groupId)
     .orderBy("created_at", "asc")
     .execute();
@@ -65,22 +83,22 @@ export async function folderTree(groupId: string): Promise<FolderNode> {
     .groupBy("folder_id")
     .execute();
   const countBy = new Map(counts.map((c) => [c.folder_id, Number(c.c)]));
+  const shared = await sharedInMap(groupId);
 
-  const nodes = new Map<string, FolderNode>();
+  const nodes = new Map<string, FolderTreeNode>();
   for (const r of rows) {
     nodes.set(r.id, {
       id: r.id,
       name: r.name,
       slug: r.slug,
       parentId: r.parent_id,
-      pub: r.pub,
-      token: r.share_token,
       photoCount: countBy.get(r.id) ?? 0,
+      sharedIn: shared.get(r.id) ?? [],
       children: [],
     });
   }
 
-  let root: FolderNode | null = null;
+  let root: FolderTreeNode | null = null;
   for (const r of rows) {
     const node = nodes.get(r.id)!;
     if (r.parent_id === null) root = node;
@@ -94,7 +112,7 @@ export async function folderTree(groupId: string): Promise<FolderNode> {
 export async function breadcrumb(groupId: string, folderId: string): Promise<FolderRow[]> {
   const all = await db
     .selectFrom("folders")
-    .select(["id", "group_id", "parent_id", "name", "slug", "pub", "share_token", "drive_folder_id"])
+    .select(FOLDER_COLUMNS)
     .where("group_id", "=", groupId)
     .execute();
   const by = new Map(all.map((f) => [f.id, f]));
@@ -136,12 +154,10 @@ export async function createFolder(args: {
       parent_id: parent.id,
       name: args.name,
       slug,
-      pub: false,
-      share_token: null,
       drive_folder_id: driveId,
       created_by: args.userId,
     })
-    .returning(["id", "group_id", "parent_id", "name", "slug", "pub", "share_token", "drive_folder_id"])
+    .returning(FOLDER_COLUMNS)
     .executeTakeFirstOrThrow();
 }
 
@@ -163,7 +179,7 @@ export async function renameFolder(groupId: string, folderId: string, name: stri
     .updateTable("folders")
     .set({ name, slug, updated_at: new Date() })
     .where("id", "=", folderId)
-    .returning(["id", "group_id", "parent_id", "name", "slug", "pub", "share_token", "drive_folder_id"])
+    .returning(FOLDER_COLUMNS)
     .executeTakeFirstOrThrow();
 
   if (f.drive_folder_id) {
@@ -174,21 +190,42 @@ export async function renameFolder(groupId: string, folderId: string, name: stri
 }
 
 /**
- * 공개/비공개 토글.
- * 공개할 때마다 새 토큰을 발급한다 — 예전에 뿌린 링크가 되살아나면 안 된다.
+ * 다른 폴더 밑으로 옮긴다.
+ *
+ * 판정은 core 의 `canMoveFolder` 가 한다 — 자기 자신·자손 밑 금지, 루트 이동 금지.
+ * 사유를 그대로 400 으로 올려 화면이 같은 문장을 쓰게 한다(규칙이 두 벌이 되지 않도록).
+ *
+ * ⚠ 옮기면 공유 범위가 따라 움직인다. `includeDescendants` 묶음 아래로 들어간 폴더는
+ *   그 순간부터 밖으로 나간다 — 화면이 이동 전에 경고해야 하고, 서버는 막지 않는다
+ *   (멤버는 모든 폴더를 그대로 보는 사이라 정리 자체를 금지할 이유가 없다).
  */
-export async function setFolderPublic(
+export async function moveFolder(
   groupId: string,
   folderId: string,
-  pub: boolean,
+  parentId: string,
 ): Promise<FolderRow> {
-  await folderOrThrow(groupId, folderId);
-  return db
+  const f = await folderOrThrow(groupId, folderId);
+  const target = await folderOrThrow(groupId, parentId);
+
+  const tree = (await groupFolders(groupId)).map((x) => ({ id: x.id, parentId: x.parent_id }));
+  const verdict = canMoveFolder(folderId, parentId, tree);
+  if (!verdict.ok) throw badRequest(verdict.reason ?? "옮길 수 없습니다");
+
+  if (f.parent_id === parentId) return f; // 이미 그 자리다. 저장소를 건드릴 이유가 없다
+
+  const updated = await db
     .updateTable("folders")
-    .set({ pub, share_token: pub ? randomToken() : null, updated_at: new Date() })
+    .set({ parent_id: parentId, updated_at: new Date() })
     .where("id", "=", folderId)
-    .returning(["id", "group_id", "parent_id", "name", "slug", "pub", "share_token", "drive_folder_id"])
+    .returning(FOLDER_COLUMNS)
     .executeTakeFirstOrThrow();
+
+  // 저장소 폴더는 아직 안 만들어졌을 수 있다(첫 업로드 때 생긴다). 둘 다 있을 때만 따라 옮긴다.
+  if (f.drive_folder_id && target.drive_folder_id) {
+    const s = await storage();
+    await s.moveFolder(f.drive_folder_id, target.drive_folder_id);
+  }
+  return updated;
 }
 
 /** 폴더와 그 아래 전부를 지운다. 루트는 지울 수 없다. */
