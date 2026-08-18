@@ -5,23 +5,27 @@
  * 폴더는 멤버가 자유롭게 만들고 중첩 깊이에 제한이 없다.
  *
  * ⚠ 공유는 TripMate 가 관리한다. Drive 공유 링크를 밖으로 내보내지 않는다.
- *   이 화면이 보여 주는 유일한 외부 주소는 서버가 준 `folder.shareUrl`(tripmate 뷰어) 하나뿐이고,
- *   이미지도 전부 `/api/media/:id` 로 나간다. Drive 링크·서명 URL 은 어디에도 그리지 않는다.
+ *   공유는 폴더가 아니라 **묶음**에 붙는다 — 링크 하나가 여러 폴더를 담을 수 있고 그 관리는
+ *   전부 ShareModal 에서 한다. 이 화면은 `sharedIn` 으로 "공유 중"만 표시한다.
+ *   이미지는 전부 `/api/media/:id` 로 나간다. Drive 링크·서명 URL 은 어디에도 그리지 않는다.
  *
  * 만들고 고치는 일은 화면을 갈아타지 않는다 — 새 폴더는 목록 위 인라인 입력,
  * 사진 보기·삭제·삭제 확인은 전부 모달이다. alert/confirm/prompt 를 쓰지 않는다.
  */
 
+import { canMoveFolder } from "@tripmate/core";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ApiError, api } from "../api/client.ts";
 import { useApiMutation, useFolder, useFolders, useInvalidateGroup } from "../api/hooks.ts";
-import type { Photo } from "../api/types.ts";
-import { Badge, ErrorBox } from "../components/Bits.tsx";
+import type { FolderNodeDto, Photo } from "../api/types.ts";
+import { Badge, ErrorBox, Field } from "../components/Bits.tsx";
 import { Icon } from "../components/Icon.tsx";
-import { ConfirmModal } from "../components/Modal.tsx";
+import { ConfirmModal, Modal } from "../components/Modal.tsx";
 import { FolderTree, pathTo } from "./photos/FolderTree.tsx";
 import { Lightbox, isVideo, stamp } from "./photos/Lightbox.tsx";
+import { PhotoEditModal } from "./photos/PhotoEditModal.tsx";
+import { ShareModal } from "./photos/ShareModal.tsx";
 
 type Sort = "up" | "taken";
 
@@ -31,10 +35,13 @@ interface UploadResult {
   failed: Array<{ name: string; reason: string }>;
 }
 
-/** 공개 토글 응답. 공개할 때마다 **새 토큰**이 나오므로 예전 링크는 되살아나지 않는다. */
-interface PublicResult {
-  folder: { id: string; name: string; slug: string; pub: boolean; shareUrl: string | null };
-  shareUrl: string | null;
+/**
+ * 다중 이동 응답. 부분 실패를 통째 실패로 만들지 않는다 — 업로드 응답과 같은 모양이다.
+ * 이미 그 폴더에 있는 사진은 moved 에도 failed 에도 들어가지 않는다.
+ */
+interface MoveResult {
+  moved: Photo[];
+  failed: Array<{ id: string; name: string | null; reason: string }>;
 }
 
 /** 사진 타일. `.photos div` 스타일을 버튼에 그대로 옮긴 것 — 타일 전체가 눌러야 하기 때문이다. */
@@ -65,6 +72,21 @@ export function PhotosScreen() {
   const folder = view.data?.folder;
   const crumbs = useMemo(() => view.data?.breadcrumb ?? [], [view.data]);
   const isRoot = !!root && !!folder && root.id === folder.id;
+  // 이 폴더를 담고 있는 묶음이 하나라도 있으면 지금 밖으로 나가는 중이다.
+  // 폴더 상세가 오기 전에는 false 로 두지 말고 folder 자체를 조건에 쓴다 —
+  // 공개 여부는 잘못 보여주면 안 되는 값이라 깜빡이게 두지 않는다.
+  const shared = !!folder && folder.sharedIn.length > 0;
+
+  // 폴더 선택 셀렉트용 평평한 목록. 깊이 제한이 없으므로 들여쓰기로 계층을 보인다.
+  const allFolders = useMemo(() => {
+    const out: Array<{ id: string; name: string; depth: number; parentId: string | null }> = [];
+    const walk = (n: FolderNodeDto, depth: number) => {
+      out.push({ id: n.id, name: n.name, depth, parentId: n.parentId });
+      for (const c of n.children) walk(c, depth + 1);
+    };
+    if (root) walk(root, 0);
+    return out;
+  }, [root]);
   const photos = view.data?.photos ?? [];
 
   // ── 트리 펼침 ────────────────────────────────────────────────────
@@ -126,27 +148,50 @@ export function PhotosScreen() {
     uploadMut.mutate(files);
   };
 
-  // ── 공개/비공개 ──────────────────────────────────────────────────
-  const [askPrivate, setAskPrivate] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const pubMut = useApiMutation<boolean, PublicResult>(
-    (pub) => api.put<PublicResult>(`/api/groups/${gid}/folders/${currentId}/public`, { pub }),
+  // ── 공유 묶음 ────────────────────────────────────────────────────
+  // 공유는 이 화면에서 켜고 끄지 않는다. 묶음 단위라 폴더 하나의 토글로 표현할 수 없다.
+  // 버튼은 입구일 뿐이고 실제 편집은 ShareModal 이 한다.
+  const [shareOpen, setShareOpen] = useState(false);
+
+  // ── 사진 고르기 · 옮기기 ────────────────────────────────────────
+  // 폴더를 옮기는 일은 실제로 자주 생긴다 (여행 중엔 아무 폴더에나 올리고 나중에 정리한다).
+  // 고르기 모드를 따로 두는 이유는, 타일을 그냥 누르면 크게 보기가 되어야 하기 때문이다.
+  const [picking, setPicking] = useState(false);
+  const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
+  const [moveTo, setMoveTo] = useState<string>("");
+  const [moveFailed, setMoveFailed] = useState<Array<{ name: string | null; reason: string }>>([]);
+
+  const togglePick = (id: string) =>
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const stopPicking = () => {
+    setPicking(false);
+    setPicked(new Set());
+    setMoveFailed([]);
+  };
+
+  const moveMut = useApiMutation<{ ids: string[]; folderId: string }, MoveResult>(
+    (body) => api.post<MoveResult>(`/api/groups/${gid}/photos/move`, body),
     gid,
-    () => {
-      setAskPrivate(false);
-      setCopied(false);
+    (d) => {
+      // 한 장이 막혀도 나머지는 옮긴다. 왜 막혔는지 그대로 보여준다 —
+      // 부분 실패를 통째 실패로 만들면 사용자가 뭐가 됐는지 알 수 없다.
+      setMoveFailed(d.failed.map((f) => ({ name: f.name, reason: f.reason })));
+      setPicked(new Set());
+      if (!d.failed.length) setPicking(false);
     },
   );
 
-  const copyShare = async () => {
-    if (!folder?.shareUrl) return;
-    try {
-      await navigator.clipboard.writeText(folder.shareUrl);
-      setCopied(true);
-    } catch {
-      setCopied(false);
-    }
-  };
+  // ── 사진 하나 고치기 (이름 · 촬영 시각) ─────────────────────────
+  const [editing, setEditing] = useState<Photo | null>(null);
+
+  // ── 폴더 옮기기 ─────────────────────────────────────────────────
+  const [folderMove, setFolderMove] = useState(false);
 
   // ── 폴더 삭제 ────────────────────────────────────────────────────
   // 사진이 들어 있으면 서버가 409 + 장수를 준다. 몇 장이 함께 사라지는지 말하지 않고 지우면 안 된다.
@@ -265,20 +310,27 @@ export function PhotosScreen() {
             비공개 → 공개로 깜빡인다. 공개 여부는 잘못 보여주면 안 되는 값이다.
           */}
           {folder ? (
-            <Badge tone={folder.pub ? "ok" : "mute"} icon={folder.pub ? "share" : "lock"}>
-              {folder.pub ? "공개 · 외부 뷰어 링크 열림" : "비공개 · 모임 멤버만"}
+            <Badge tone={shared ? "ok" : "mute"} icon={shared ? "share" : "lock"}>
+              {shared
+                ? `공유 중 · 묶음 ${folder.sharedIn.length}개`
+                : "비공개 · 모임 멤버만"}
             </Badge>
           ) : null}
           <div className="end">
+            {/* 루트도 묶음에 담을 수 있다 — 공유 버튼은 어느 폴더에서나 보인다 */}
+            <button
+              className={"btn btn-sm " + (shared ? "btn-ghost" : "btn-soft")}
+              disabled={!folder}
+              onClick={() => setShareOpen(true)}
+            >
+              <Icon name="share" size={14} />
+              {shared ? "공유 관리" : "공유"}
+            </button>
             {isRoot ? null : (
               <>
-                <button
-                  className={"btn btn-sm " + (folder?.pub ? "btn-ghost" : "btn-soft")}
-                  disabled={pubMut.isPending || !folder}
-                  onClick={() => (folder?.pub ? setAskPrivate(true) : pubMut.mutate(true))}
-                >
-                  <Icon name="share" size={14} />
-                  {folder?.pub ? "비공개로 전환" : "공개로 전환"}
+                <button className="btn btn-ghost btn-sm" onClick={() => setFolderMove(true)}>
+                  <Icon name="folder" size={14} />
+                  폴더 옮기기
                 </button>
                 <button
                   className="btn btn-danger btn-sm"
@@ -296,8 +348,8 @@ export function PhotosScreen() {
 
         {isRoot ? (
           <p className="hint" style={{ marginBottom: 14 }}>
-            최상위 폴더는 공개할 수 없습니다 — 모임의 사진 전부가 링크 하나로 나가기 때문입니다.
-            공유할 하위 폴더를 만들어 그 폴더를 공개하세요.
+            최상위 폴더는 이름이 여행 모임 제목이고 지울 수 없습니다. 공유할 때는 어느 폴더까지
+            내보낼지 <b>공유</b> 에서 골라 담습니다 — 최상위를 담으면 모임의 사진 전부가 나갑니다.
           </p>
         ) : null}
 
@@ -380,26 +432,7 @@ export function PhotosScreen() {
         ) : null}
 
         {createMut.isError ? <ErrorBox error={createMut.error} /> : null}
-        {pubMut.isError ? <ErrorBox error={pubMut.error} /> : null}
         {delError ? <ErrorBox error={new Error(delError)} /> : null}
-
-        {/* ── 공개 링크 ── */}
-        {folder?.pub && folder.shareUrl ? (
-          <div className="linkbar">
-            <div className="r1">
-              <Icon name="share" size={15} />이 폴더의 뷰어 링크
-              <code>{folder.shareUrl}</code>
-              <button className="btn btn-ghost btn-sm" onClick={() => void copyShare()}>
-                {copied ? "복사됨" : "링크 복사"}
-              </button>
-            </div>
-            <div className="r2">
-              이 링크로 들어온 사람은 <b>이 폴더의 사진·동영상만</b> 봅니다. 하위 폴더로 이동하거나
-              업로드·삭제할 수 없습니다. <b>비공개로 되돌리면 그 링크는 즉시 죽고, 다시 공개하면 새
-              주소가 발급됩니다</b> — 예전에 뿌린 링크는 되살아나지 않습니다.
-            </div>
-          </div>
-        ) : null}
 
         {/* ── 업로드 영역 ── */}
         <div
@@ -462,8 +495,8 @@ export function PhotosScreen() {
                   <span
                     className="tile"
                     style={{
-                      background: k.pub ? "var(--ok-bg)" : "var(--stay-bg)",
-                      color: k.pub ? "var(--ok)" : "var(--stay)",
+                      background: k.sharedIn.length ? "var(--ok-bg)" : "var(--stay-bg)",
+                      color: k.sharedIn.length ? "var(--ok)" : "var(--stay)",
                     }}
                   >
                     <Icon name="folder" />
@@ -472,9 +505,9 @@ export function PhotosScreen() {
                     <b>{k.name}</b>
                     <small>{k.photoCount}개</small>
                   </span>
-                  {k.pub ? (
+                  {k.sharedIn.length ? (
                     <span style={{ marginLeft: "auto" }}>
-                      <Badge tone="ok">공개</Badge>
+                      <Badge tone="ok">공유 중</Badge>
                     </span>
                   ) : null}
                 </button>
@@ -492,7 +525,61 @@ export function PhotosScreen() {
               ? ` · 촬영 정보 없는 ${fallbackCount}개는 업로드 시각 기준`
               : ""}
           </span>
+          {photos.length ? (
+            <span className="end">
+              <button className="btn btn-ghost btn-sm" onClick={() => (picking ? stopPicking() : setPicking(true))}>
+                <Icon name={picking ? "x" : "check"} size={14} />
+                {picking ? "고르기 끝" : "골라서 옮기기"}
+              </button>
+            </span>
+          ) : null}
         </div>
+
+        {/* 고른 사진을 어느 폴더로 보낼지. 대상은 이 모임의 폴더 전부다 */}
+        {picking ? (
+          <div className="tip" style={{ marginBottom: 12, alignItems: "center", flexWrap: "wrap" }}>
+            <Icon name="folder" />
+            <span>
+              <b>{picked.size}장</b> 골랐습니다. 옮길 폴더를 고르세요.
+            </span>
+            <span className="chips" style={{ marginLeft: "auto" }}>
+              <select
+                aria-label="옮길 폴더"
+                value={moveTo}
+                onChange={(e) => setMoveTo(e.target.value)}
+              >
+                <option value="">폴더 선택…</option>
+                {allFolders
+                  .filter((f) => f.id !== currentId)
+                  .map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {"　".repeat(f.depth) + f.name}
+                    </option>
+                  ))}
+              </select>
+              <button
+                className="btn btn-sm"
+                disabled={!picked.size || !moveTo || moveMut.isPending}
+                onClick={() => moveMut.mutate({ ids: [...picked], folderId: moveTo })}
+              >
+                {moveMut.isPending ? "옮기는 중…" : "여기로 옮기기"}
+              </button>
+            </span>
+          </div>
+        ) : null}
+
+        {moveFailed.length ? (
+          <div className="tip warn" style={{ marginBottom: 12 }}>
+            <Icon name="lock" />
+            <span>
+              {moveFailed.map((f, i) => (
+                <span key={i} style={{ display: "block" }}>
+                  {f.name ?? "사진"} — {f.reason}
+                </span>
+              ))}
+            </span>
+          </div>
+        ) : null}
 
         {photos.length ? (
           <div className="photos">
@@ -500,10 +587,16 @@ export function PhotosScreen() {
               <button
                 key={p.id}
                 style={TILE}
+                // 고르기 모드가 아니면 타일을 누르면 크게 보기다. 두 동작을 섞지 않는다.
                 onClick={() => {
+                  if (picking) {
+                    togglePick(p.id);
+                    return;
+                  }
                   setPhotoError(null);
                   setOpenIdx(i);
                 }}
+                aria-pressed={picking ? picked.has(p.id) : undefined}
                 title={p.name}
               >
                 {isVideo(p) ? (
@@ -541,6 +634,21 @@ export function PhotosScreen() {
                 )}
                 <span className="nm">{p.name}</span>
                 <span className="tm">{stamp(sort === "taken" ? p.takenAt : p.uploadedAt)}</span>
+                {picking ? (
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      position: "absolute",
+                      inset: 0,
+                      display: "grid",
+                      placeItems: "center",
+                      background: picked.has(p.id) ? "rgba(47,83,224,.35)" : "rgba(19,23,32,.12)",
+                      color: "#fff",
+                    }}
+                  >
+                    {picked.has(p.id) ? <Icon name="check" size={26} /> : null}
+                  </span>
+                ) : null}
                 {p.takenFallback ? (
                   <span className="noexif" title="촬영 정보 없음 · 업로드 시각 기준">
                     촬영 정보 없음
@@ -554,9 +662,10 @@ export function PhotosScreen() {
         )}
 
         <p className="note">
-          모임 멤버는 모든 폴더를 그대로 봅니다 — 폴더별 권한 설정이 없습니다. 폴더를 <b>공개</b>로
-          바꾸면 그 폴더의 미디어만 보이는 뷰어 링크가 만들어집니다. 하위·다른 폴더로 이동할 수 없고,
-          올리거나 지울 수도 없습니다. 외부로 나가는 것은 <b>미디어뿐</b>이며 문서는 공유되지 않습니다.
+          모임 멤버는 모든 폴더를 그대로 봅니다 — 폴더별 권한 설정이 없습니다.
+          밖으로 내보낼 때는 <b>공유</b>에서 어느 폴더까지 담을지 골라 <b>묶음</b>을 만듭니다.
+          링크를 받은 사람은 <b>담긴 폴더의 미디어만</b> 보고 그 밖으로 나갈 수 없으며, 올리거나 지울 수도 없습니다.
+          외부로 나가는 것은 <b>미디어뿐</b>이며 문서·정산·일정은 공유되지 않습니다.
         </p>
       </div>
 
@@ -573,6 +682,10 @@ export function PhotosScreen() {
           onNext={() => step(1)}
           onClose={() => setOpenIdx(null)}
           onAskDelete={() => setAskPhoto(true)}
+          onEdit={() => {
+            setEditing(current);
+            setOpenIdx(null);
+          }}
         />
       ) : null}
 
@@ -593,20 +706,29 @@ export function PhotosScreen() {
         onClose={() => setAskPhoto(false)}
       />
 
-      <ConfirmModal
-        open={askPrivate}
-        title="비공개로 되돌릴까요?"
-        danger
-        busy={pubMut.isPending}
-        confirmLabel="비공개로 전환"
-        message={
-          <>
-            지금 뿌려 둔 뷰어 링크가 <b>즉시 죽습니다.</b> 나중에 다시 공개하면 <b>새 주소</b>가
-            발급되므로 예전 링크는 되살아나지 않습니다.
-          </>
-        }
-        onConfirm={() => pubMut.mutate(false)}
-        onClose={() => setAskPrivate(false)}
+      <PhotoEditModal
+        photo={editing}
+        gid={gid}
+        folders={allFolders}
+        onClose={() => setEditing(null)}
+      />
+
+      <FolderMoveModal
+        open={folderMove}
+        onClose={() => setFolderMove(false)}
+        gid={gid}
+        folderId={currentId}
+        folderName={folder?.name ?? ""}
+        folders={allFolders}
+      />
+
+      {/* 공유 묶음 관리. 지금 열어 둔 폴더를 미리 골라 둔 채로 연다 */}
+      <ShareModal
+        open={shareOpen}
+        onClose={() => setShareOpen(false)}
+        gid={gid}
+        root={root}
+        seedFolderId={currentId}
       />
 
       <ConfirmModal
@@ -631,5 +753,95 @@ export function PhotosScreen() {
         onClose={() => setDel(null)}
       />
     </div>
+  );
+}
+
+/**
+ * 폴더를 다른 폴더 밑으로 옮긴다.
+ *
+ * 자기 자신이나 자기 자손 밑으로 넣으면 트리가 고리가 되어 탐색이 끝나지 않는다.
+ * 그 검사는 core 의 `canMoveFolder` 한 벌이고 서버도 같은 함수를 쓴다 —
+ * 저장 버튼을 눌러 400 을 받기 전에 이유를 먼저 보여 준다.
+ */
+function FolderMoveModal({
+  open,
+  onClose,
+  gid,
+  folderId,
+  folderName,
+  folders,
+}: {
+  open: boolean;
+  onClose: () => void;
+  gid: string;
+  folderId: string | undefined;
+  folderName: string;
+  folders: Array<{ id: string; name: string; depth: number; parentId: string | null }>;
+}) {
+  const [target, setTarget] = useState("");
+
+  useEffect(() => {
+    if (open) setTarget("");
+  }, [open]);
+
+  const move = useApiMutation<string, unknown>(
+    (parentId) => api.patch(`/api/groups/${gid}/folders/${folderId}`, { parentId }),
+    gid,
+    onClose,
+  );
+
+  const check =
+    folderId && target
+      ? canMoveFolder(folderId, target, folders.map((f) => ({ id: f.id, parentId: f.parentId })))
+      : null;
+
+  return (
+    <Modal open={open} title="폴더 옮기기" onClose={onClose} icon="folder">
+      <p className="hint">
+        <b>“{folderName}”</b> 을 어느 폴더 밑으로 옮길까요? 하위 폴더도 통째로 따라갑니다.
+      </p>
+
+      <Field label="옮길 위치" htmlFor="fmTarget">
+        <select id="fmTarget" value={target} onChange={(e) => setTarget(e.target.value)}>
+          <option value="">폴더 선택…</option>
+          {folders
+            .filter((f) => f.id !== folderId)
+            .map((f) => (
+              <option key={f.id} value={f.id}>
+                {"　".repeat(f.depth) + f.name}
+              </option>
+            ))}
+        </select>
+      </Field>
+
+      {check && !check.ok ? (
+        <div className="tip warn">
+          <Icon name="lock" />
+          <span>{check.reason}</span>
+        </div>
+      ) : null}
+
+      <div className="tip">
+        <Icon name="bulb" />
+        <span>
+          옮긴 위치가 <b>하위 전부</b>로 공유된 폴더 아래라면 이 폴더의 사진도 함께 밖으로 나갑니다.
+        </span>
+      </div>
+
+      {move.isError ? <ErrorBox error={move.error} /> : null}
+
+      <div className="chips" style={{ marginTop: 14, justifyContent: "flex-end" }}>
+        <button className="btn btn-ghost" onClick={onClose}>
+          취소
+        </button>
+        <button
+          className="btn"
+          disabled={!target || !check?.ok || move.isPending}
+          onClick={() => move.mutate(target)}
+        >
+          {move.isPending ? "옮기는 중…" : "옮기기"}
+        </button>
+      </div>
+    </Modal>
   );
 }

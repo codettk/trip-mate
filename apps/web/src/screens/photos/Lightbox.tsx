@@ -37,6 +37,8 @@ export interface LightboxProps {
   onNext: () => void;
   onClose: () => void;
   onAskDelete: () => void;
+  /** 이름·촬영 시각·폴더를 고친다. 라이트박스를 닫고 폼 모달로 넘긴다 */
+  onEdit: () => void;
 }
 
 export function Lightbox({
@@ -50,6 +52,7 @@ export function Lightbox({
   onNext,
   onClose,
   onAskDelete,
+  onEdit,
 }: LightboxProps) {
   useEffect(() => {
     if (locked) return;
@@ -85,6 +88,9 @@ export function Lightbox({
             {index + 1} / {count}
           </span>
           <div className="sp" />
+          <button className="btn btn-ghost btn-sm" onClick={onEdit} disabled={busy}>
+            정보 고치기
+          </button>
           <button className="btn btn-danger btn-sm" onClick={onAskDelete} disabled={busy}>
             <Icon name="x" size={14} />
             삭제
