@@ -17,13 +17,21 @@
  *
  *  3. 항목이 바뀌면 정산 마감이 풀린다.
  *     금액이 바뀌었는데 "마감됨"이 남아 있으면 거짓말이 된다.
+ *
+ *  4. 시각은 표시용이다. 종료 시각도 체크인·체크아웃 시각도 금액에 아무 영향이 없다.
+ *     시각만 고쳤다고 환율 스냅샷이 다시 잡히면 안 되므로 keepRate 조건에도 넣지 않는다.
+ *     (숙소가 아닌 항목의 체크인·체크아웃 시각을 비우는 것은 1번과 같은 처리다.)
  */
 
 import {
   CATEGORIES,
+  crossesMidnight,
   currencyOf,
   dowOf,
+  durationMinutes,
   isCurrency,
+  isTime,
+  nightIndex,
   nightsOf,
   stayPhase,
   staysOn,
@@ -43,8 +51,9 @@ import { closingRate } from "../rates/provider.ts";
 // ────────────────────────────────────────────────────────────────────
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
-/** 빈 문자열이거나 24시간제 HH:MM. 그 사이는 없다. */
-const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+// 시각 형식(빈 문자열이거나 HH:MM)은 core 의 isTime() 이 정본이다.
+// 폼 미리보기와 서버 판정이 갈리면 "저장은 됐는데 화면과 다르다"가 되므로 여기서 다시 쓰지 않는다.
 
 const uuid = z.string().uuid("id 형식이 올바르지 않습니다");
 const isoDate = z.string().regex(ISO_DATE, "날짜는 YYYY-MM-DD 형식이어야 합니다");
@@ -66,11 +75,17 @@ const itemBodySchema = z.object({
   title: z.string().trim().min(1, "제목을 입력하세요").max(120),
 
   time: z.string().max(5).default(""),
+  // 시각 넷은 전부 선택이고 기본값이 "" 다. 형식 검사는 normalize 가 isTime() 으로 한 번에 한다 —
+  // 여기서 걸러 버리면 zod 의 영어 issue 가 그대로 나가고, 어느 시각이 틀렸는지 알려 줄 수 없다.
+  endTime: z.string().max(5).default(""),
   meta: z.string().max(300).default(""),
   booked: z.boolean().default(false),
   thumb: z.string().max(500).nullable().default(null),
   checkIn: isoDate.nullable().default(null),
   checkOut: isoDate.nullable().default(null),
+  // cat='stay' 전용. 날짜는 위 checkIn/checkOut 이 들고 있고 여기는 시각뿐이다.
+  checkInTime: z.string().max(5).default(""),
+  checkOutTime: z.string().max(5).default(""),
 
   // 정산 토글이 꺼져 있으면 아래 넷은 저장 시 서버가 강제로 비운다
   split: z.boolean().default(false),
@@ -97,6 +112,12 @@ interface ItemDto {
   dayN: number;
   date: string;
   time: string;
+  /** 종료 시각. 없으면 "" */
+  endTime: string;
+  /** 종료가 시작보다 이르면 익일이다 (야간 비행·버스). 화면이 다시 판단하지 않게 서버가 준다 */
+  nextDay: boolean;
+  /** 걸린 시간(분). 시작이나 종료가 비어 있으면 null — "모른다"와 "0분"은 다르다 */
+  duration: number | null;
   cat: Category;
   title: string;
   meta: string;
@@ -104,6 +125,9 @@ interface ItemDto {
   thumb: string | null;
   checkIn: string | null;
   checkOut: string | null;
+  /** cat='stay' 가 아니면 항상 "" */
+  checkInTime: string;
+  checkOutTime: string;
   nights: number;
   split: boolean;
   cost: number;
@@ -115,10 +139,23 @@ interface ItemDto {
   shared: { members: string[]; guests: number };
 }
 
+/**
+ * 일차 헤더 아래에 놓이는 숙소 칩.
+ *
+ * 칩이 이름과 phase 뿐이던 때는 여러 날에 걸친 숙소가 매일 똑같아 보여서
+ * 지금이 며칠째인지, 몇 시에 들어가는지를 알 수 없었다.
+ * 그래서 박 수와 시각까지 같이 내려 준다 — 화면이 items 를 뒤져 다시 계산하지 않게.
+ */
 interface StayChip {
   itemId: string;
   title: string;
   phase: StayPhase;
+  /** 체크인한 날이 1박째. 체크아웃 날은 묵지 않으므로 null */
+  nightIndex: number | null;
+  checkIn: string;
+  checkOut: string;
+  checkInTime: string;
+  checkOutTime: string;
 }
 
 /**
@@ -135,6 +172,7 @@ async function readItems(groupId: string, itemId?: string): Promise<ItemDto[]> {
       "items.id as id",
       "items.day_id as dayId",
       "items.time as time",
+      "items.end_time as endTime",
       "items.cat as cat",
       "items.title as title",
       "items.meta as meta",
@@ -148,6 +186,8 @@ async function readItems(groupId: string, itemId?: string): Promise<ItemDto[]> {
       "items.guests as guests",
       "items.check_in as checkIn",
       "items.check_out as checkOut",
+      "items.check_in_time as checkInTime",
+      "items.check_out_time as checkOutTime",
       "items.sort_order as sortOrder",
       "days.n as dayN",
       "days.date as date",
@@ -210,6 +250,11 @@ async function readItems(groupId: string, itemId?: string): Promise<ItemDto[]> {
       dayN: r.dayN,
       date: r.date,
       time: r.time,
+      endTime: r.endTime,
+      // 파생값은 core 함수로만 만든다. 화면이 "종료 < 시작이면 익일"을 따로 구현하면
+      // 규칙이 두 벌이 되고, 한쪽만 고쳐지는 순간 카드와 저장값이 어긋난다.
+      nextDay: crossesMidnight(r.time, r.endTime),
+      duration: durationMinutes(r.time, r.endTime),
       cat: r.cat,
       title: r.title,
       meta: r.meta,
@@ -217,6 +262,8 @@ async function readItems(groupId: string, itemId?: string): Promise<ItemDto[]> {
       thumb: r.thumb,
       checkIn: r.checkIn,
       checkOut: r.checkOut,
+      checkInTime: r.checkInTime,
+      checkOutTime: r.checkOutTime,
       nights: nightsOf(r.checkIn, r.checkOut),
       split: r.split,
       cost,
@@ -244,6 +291,7 @@ async function itemOrThrow(groupId: string, itemId: string): Promise<ItemDto> {
 interface Normalized {
   dayId: string;
   time: string;
+  endTime: string;
   cat: Category;
   title: string;
   meta: string;
@@ -251,6 +299,8 @@ interface Normalized {
   thumb: string | null;
   checkIn: string | null;
   checkOut: string | null;
+  checkInTime: string;
+  checkOutTime: string;
   split: boolean;
   cost: number;
   cur: string;
@@ -264,6 +314,7 @@ interface Normalized {
 interface Draft {
   dayId: string;
   time: string;
+  endTime: string;
   cat: Category;
   title: string;
   meta: string;
@@ -271,6 +322,8 @@ interface Draft {
   thumb: string | null;
   checkIn: string | null;
   checkOut: string | null;
+  checkInTime: string;
+  checkOutTime: string;
   split: boolean;
   cost: number;
   /** 안 보내면 모임 기본 통화를 쓴다 — 여행지에서 이미 추론해 둔 값이다 */
@@ -306,18 +359,40 @@ async function normalize(groupId: string, draft: Draft, prev?: Prev): Promise<No
     .executeTakeFirst();
   if (!day) throw badRequest("이 모임의 일차가 아닙니다");
 
-  // ── 시간 ─────────────────────────────────────────────────────────
+  // ── 시각 ─────────────────────────────────────────────────────────
   const time = draft.time.trim();
-  if (time !== "" && !HHMM.test(time)) throw badRequest("시간은 비워 두거나 HH:MM 형식이어야 합니다");
+  const endTime = draft.endTime.trim();
+  const checkInTimeIn = draft.checkInTime.trim();
+  const checkOutTimeIn = draft.checkOutTime.trim();
+
+  if (!isTime(time)) throw badRequest("시작 시각은 비워 두거나 HH:MM 형식이어야 합니다");
+  if (!isTime(endTime)) throw badRequest("종료 시각은 비워 두거나 HH:MM 형식이어야 합니다");
+  // 숙소가 아니면 아래에서 어차피 비우지만, 형식은 여기서 먼저 본다 —
+  // 오타를 조용히 삼키면 사용자는 "15;00" 을 저장했다고 믿는다.
+  if (!isTime(checkInTimeIn)) throw badRequest("체크인 시각은 비워 두거나 HH:MM 형식이어야 합니다");
+  if (!isTime(checkOutTimeIn)) throw badRequest("체크아웃 시각은 비워 두거나 HH:MM 형식이어야 합니다");
+
+  // 시작 없이 끝만 있는 일정은 타임라인에 놓을 자리가 없다. 시간 열이 시작 시각으로 정렬되기 때문이다.
+  if (endTime !== "" && time === "") throw badRequest("종료 시각만 입력할 수 없습니다. 시작 시각을 먼저 입력하세요");
+
+  // ⚠ endTime < time 은 오류가 아니다 — 익일이라는 뜻이다(야간 비행·버스).
+  //   crossesMidnight() 이 그렇게 해석하므로 여기서 막으면 23:00~01:30 을 저장할 방법이 사라진다.
 
   // ── 숙소 기간 ────────────────────────────────────────────────────
   // 숙소가 아니면 체크인·체크아웃은 무조건 비운다. 카테고리를 바꿨는데 날짜가 남아 있으면
   // staysOn() 이 그 항목을 계속 "숙박 중"으로 집어낸다.
+  // 시각도 같이 비운다. split=false 일 때 cost/payer 를 0/null 로 확정하는 것과 정확히 같은 처리다 —
+  // DB 의 items_stay_times_ck 가 한 번 더 막지만, 400 을 던지지 않고 조용히 비우는 게 맞다.
+  // 사용자는 카테고리를 바꿨을 뿐이고, 안 보이는 필드 때문에 저장이 실패하면 이유를 알 수 없다.
   let checkIn: string | null = null;
   let checkOut: string | null = null;
+  let checkInTime = "";
+  let checkOutTime = "";
   if (draft.cat === "stay") {
     checkIn = draft.checkIn;
     checkOut = draft.checkOut;
+    checkInTime = checkInTimeIn;
+    checkOutTime = checkOutTimeIn;
     if ((checkIn === null) !== (checkOut === null)) {
       throw badRequest("숙소는 체크인·체크아웃 날짜를 함께 입력해야 합니다");
     }
@@ -339,6 +414,8 @@ async function normalize(groupId: string, draft: Draft, prev?: Prev): Promise<No
     return {
       dayId: day.id,
       time,
+      // 시각은 정산과 무관하다 — 정산 토글을 꺼도 일정으로서의 시간은 그대로 남는다.
+      endTime,
       cat: draft.cat,
       title: draft.title,
       meta: draft.meta,
@@ -346,6 +423,8 @@ async function normalize(groupId: string, draft: Draft, prev?: Prev): Promise<No
       thumb: draft.thumb,
       checkIn,
       checkOut,
+      checkInTime,
+      checkOutTime,
       split: false,
       cost: 0,
       cur: group.cur, // 다시 켤 때의 출발점은 모임 기본 통화다
@@ -402,6 +481,7 @@ async function normalize(groupId: string, draft: Draft, prev?: Prev): Promise<No
   return {
     dayId: day.id,
     time,
+    endTime,
     cat: draft.cat,
     title: draft.title,
     meta: draft.meta,
@@ -409,6 +489,8 @@ async function normalize(groupId: string, draft: Draft, prev?: Prev): Promise<No
     thumb: draft.thumb,
     checkIn,
     checkOut,
+    checkInTime,
+    checkOutTime,
     split: true,
     cost: draft.cost,
     cur,
@@ -476,6 +558,12 @@ export async function itineraryRoutes(app: FastifyInstance): Promise<void> {
             itemId: s.id,
             title: s.title,
             phase: stayPhase(d.date, s.checkIn, s.checkOut) ?? "mid",
+            nightIndex: nightIndex(d.date, s.checkIn, s.checkOut),
+            // staysOn 이 이미 null 을 걸러 냈지만 타입상으론 nullable 이라 "" 로 떨어뜨린다.
+            checkIn: s.checkIn ?? "",
+            checkOut: s.checkOut ?? "",
+            checkInTime: s.checkInTime,
+            checkOutTime: s.checkOutTime,
           }),
         ),
         items: byDay.get(d.id) ?? [],
@@ -519,6 +607,7 @@ export async function itineraryRoutes(app: FastifyInstance): Promise<void> {
     const n = await normalize(gid, {
       dayId: b.dayId,
       time: b.time,
+      endTime: b.endTime,
       cat: b.cat,
       title: b.title,
       meta: b.meta,
@@ -526,6 +615,8 @@ export async function itineraryRoutes(app: FastifyInstance): Promise<void> {
       thumb: b.thumb,
       checkIn: b.checkIn,
       checkOut: b.checkOut,
+      checkInTime: b.checkInTime,
+      checkOutTime: b.checkOutTime,
       split: b.split,
       cost: b.cost,
       cur: b.cur,
@@ -551,6 +642,7 @@ export async function itineraryRoutes(app: FastifyInstance): Promise<void> {
           group_id: gid,
           day_id: n.dayId,
           time: n.time,
+          end_time: n.endTime,
           cat: n.cat,
           title: n.title,
           meta: n.meta,
@@ -564,6 +656,8 @@ export async function itineraryRoutes(app: FastifyInstance): Promise<void> {
           guests: n.guests,
           check_in: n.checkIn,
           check_out: n.checkOut,
+          check_in_time: n.checkInTime,
+          check_out_time: n.checkOutTime,
           sort_order: sortOrder,
           created_by: user.id,
         })
@@ -607,6 +701,7 @@ export async function itineraryRoutes(app: FastifyInstance): Promise<void> {
       {
         dayId: b.dayId ?? cur.dayId,
         time: b.time ?? cur.time,
+        endTime: b.endTime ?? cur.endTime,
         cat: b.cat ?? cur.cat,
         title: b.title ?? cur.title,
         meta: b.meta ?? cur.meta,
@@ -614,6 +709,8 @@ export async function itineraryRoutes(app: FastifyInstance): Promise<void> {
         thumb: b.thumb !== undefined ? b.thumb : cur.thumb,
         checkIn: b.checkIn !== undefined ? b.checkIn : cur.checkIn,
         checkOut: b.checkOut !== undefined ? b.checkOut : cur.checkOut,
+        checkInTime: b.checkInTime ?? cur.checkInTime,
+        checkOutTime: b.checkOutTime ?? cur.checkOutTime,
         split: b.split ?? cur.split,
         cost: b.cost ?? cur.cost,
         cur: b.cur ?? cur.cur,
@@ -630,6 +727,7 @@ export async function itineraryRoutes(app: FastifyInstance): Promise<void> {
         .set({
           day_id: n.dayId,
           time: n.time,
+          end_time: n.endTime,
           cat: n.cat,
           title: n.title,
           meta: n.meta,
@@ -643,6 +741,8 @@ export async function itineraryRoutes(app: FastifyInstance): Promise<void> {
           guests: n.guests,
           check_in: n.checkIn,
           check_out: n.checkOut,
+          check_in_time: n.checkInTime,
+          check_out_time: n.checkOutTime,
           updated_at: new Date(),
         })
         .where("id", "=", iid)
