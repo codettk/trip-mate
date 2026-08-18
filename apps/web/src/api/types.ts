@@ -74,6 +74,8 @@ export interface Item {
   dayN: number;
   date: string;
   time: string;
+  /** 종료 시각. 비어 있을 수 있다 */
+  endTime: string;
   cat: Category;
   title: string;
   meta: string;
@@ -82,6 +84,13 @@ export interface Item {
   checkIn: string | null;
   checkOut: string | null;
   nights: number;
+  /** cat==="stay" 전용. 날짜는 checkIn/checkOut 이 들고 있고 여기는 시각뿐이다 */
+  checkInTime: string;
+  checkOutTime: string;
+  /** endTime < time — 자정을 넘긴다. 화면은 "+1일" 배지를 붙인다 */
+  nextDay: boolean;
+  /** 걸린 시간(분). 한쪽이라도 비면 null — "모른다"와 0분은 다르다 */
+  duration: number | null;
   /** false 면 아래 금액 필드가 전부 비어 있다 */
   split: boolean;
   cost: number;
@@ -97,6 +106,12 @@ export interface StayChip {
   itemId: string;
   title: string;
   phase: "in" | "mid" | "out";
+  /** 체크인한 날이 1박째. 체크아웃하는 날은 묵지 않으므로 null */
+  nightIndex: number | null;
+  checkIn: string | null;
+  checkOut: string | null;
+  checkInTime: string;
+  checkOutTime: string;
 }
 
 export interface ItineraryDay extends Day {
@@ -175,9 +190,9 @@ export interface FolderNodeDto {
   name: string;
   slug: string;
   parentId: string | null;
-  pub: boolean;
-  token: string | null;
   photoCount: number;
+  /** 이 폴더를 담고 있는 공유 묶음 id 들. 비어 있지 않으면 미디어가 밖으로 나가는 중이다 */
+  sharedIn: string[];
   children: FolderNodeDto[];
 }
 
@@ -196,10 +211,57 @@ export interface Photo {
 }
 
 export interface FolderView {
-  folder: { id: string; name: string; slug: string; pub: boolean; shareUrl: string | null };
+  folder: { id: string; name: string; slug: string; sharedIn: string[] };
   breadcrumb: Array<{ id: string; name: string }>;
-  children: Array<{ id: string; name: string; slug: string; pub: boolean; photoCount: number }>;
+  children: Array<{ id: string; name: string; slug: string; sharedIn: string[]; photoCount: number }>;
   photos: Photo[];
+}
+
+/* ══════════ 공유 묶음 ══════════ */
+
+/**
+ * 묶음에 담긴 한 줄.
+ * `includeDescendants` 면 그 아래 모든 깊이가 따라 나가고,
+ * **나중에 새로 만든 하위 폴더도 자동으로 포함된다** — 화면이 배지로 알려야 한다.
+ */
+export interface ShareEntryDto {
+  folderId: string;
+  includeDescendants: boolean;
+}
+
+export interface ShareLink {
+  id: string;
+  label: string;
+  /** 밖에 뿌리는 주소. 토큰이 이 안에만 있다 */
+  url: string;
+  entries: ShareEntryDto[];
+  /** resolveShared 결과 크기 — 딸려 나가는 폴더까지 센 실제 개수 */
+  folderCount: number;
+  photoCount: number;
+  createdAt: string;
+}
+
+export interface ShareList {
+  shares: ShareLink[];
+}
+
+/* ══════════ 외부 뷰어 ══════════ */
+
+/**
+ * 묶음 뷰어 응답. **묶음에 없는 폴더는 여기 나타나지도 않는다.**
+ * `memberView` 가 참이어도 내용은 그대로 온다 — 자동으로 앱에 보내지 않고 배너만 띄운다.
+ */
+export interface ShareViewer {
+  memberView: boolean;
+  groupId: string;
+  group: { name: string };
+  link: { label: string };
+  /** null 이면 묶음 루트(담긴 폴더가 여러 개라 고르는 화면) */
+  folder: { name: string; slug: string } | null;
+  breadcrumb: Array<{ name: string; slug: string }>;
+  folders: Array<{ name: string; slug: string; photoCount: number }>;
+  photos: Photo[];
+  sort: "up" | "taken";
 }
 
 export interface DocSummary {

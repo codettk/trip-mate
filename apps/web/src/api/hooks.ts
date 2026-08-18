@@ -19,6 +19,7 @@ import type {
   Me,
   Member,
   Settlement,
+  ShareList,
 } from "./types.ts";
 
 export const keys = {
@@ -33,6 +34,7 @@ export const keys = {
   docs: (gid: string) => ["docs", gid] as const,
   doc: (gid: string, did: string) => ["doc", gid, did] as const,
   invite: (gid: string) => ["invite", gid] as const,
+  shares: (gid: string) => ["shares", gid] as const,
 };
 
 export function useMe() {
@@ -96,6 +98,18 @@ export function useFolder(gid: string | undefined, fid: string | undefined, sort
     queryKey: keys.folder(gid ?? "", fid ?? "", sort),
     queryFn: () => api.get<FolderView>(`/api/groups/${gid}/folders/${fid}?sort=${sort}`),
     enabled: !!gid && !!fid,
+  });
+}
+
+/**
+ * 공유 묶음 목록. 공유 관리 모달이 쓴다.
+ * 폴더 트리의 `sharedIn` 과 같은 진실을 보므로, 묶음을 고치면 폴더 쿼리도 함께 무효화해야 한다.
+ */
+export function useShares(gid: string | undefined) {
+  return useQuery({
+    queryKey: keys.shares(gid ?? ""),
+    queryFn: () => api.get<ShareList>(`/api/groups/${gid}/shares`),
+    enabled: !!gid,
   });
 }
 
