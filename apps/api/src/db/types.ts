@@ -99,6 +99,12 @@ export interface ItemsTable {
   check_in: ColumnType<string, string | null, string | null> | null;
   check_out: ColumnType<string, string | null, string | null> | null;
 
+  /** 종료 시각 "11:00". 시작보다 이르면 익일이다 (야간 이동) */
+  end_time: string;
+  /** cat='stay' 전용. 날짜는 check_in 이고 여기는 시각만이다 */
+  check_in_time: string;
+  check_out_time: string;
+
   sort_order: number;
   created_by: string | null;
   created_at: Created;
@@ -133,9 +139,7 @@ export interface FoldersTable {
   parent_id: string | null;
   name: string;
   slug: string;
-  pub: boolean;
-  /** 공개일 때만 존재. 비공개로 돌리면 NULL 이 되어 링크가 즉시 죽는다 */
-  share_token: string | null;
+  // 공유는 폴더가 아니라 share_links 에 있다. 권한 규칙을 두 군데 두지 않는다.
   drive_folder_id: string | null;
   created_by: string | null;
   created_at: Created;
@@ -190,6 +194,27 @@ export interface MigrationsTable {
   applied_at: Created;
 }
 
+/**
+ * 외부 공유 묶음. 공유의 정본은 여기 한 곳이다.
+ * 토큰은 묶음 id 나 폴더 id 에서 파생시키지 않는다 — 중지했다 다시 공유하면 새로 뽑는다.
+ */
+export interface ShareLinksTable {
+  id: Generated<string>;
+  group_id: string;
+  label: string;
+  token: string;
+  created_by: string | null;
+  created_at: Created;
+  updated_at: Created;
+}
+
+export interface ShareLinkFoldersTable {
+  link_id: string;
+  folder_id: string;
+  /** 참이면 그 폴더 아래 전부. 나중에 생긴 하위 폴더도 자동으로 따라 나간다 */
+  include_descendants: boolean;
+}
+
 export interface Database {
   users: UsersTable;
   sessions: SessionsTable;
@@ -202,6 +227,8 @@ export interface Database {
   transfer_states: TransferStatesTable;
   guest_back_states: GuestBackStatesTable;
   folders: FoldersTable;
+  share_links: ShareLinksTable;
+  share_link_folders: ShareLinkFoldersTable;
   photos: PhotosTable;
   docs: DocsTable;
   doc_blocks: DocBlocksTable;
