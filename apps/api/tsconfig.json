@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "types": ["node"],
+    // Node 24 가 .ts 를 그대로 실행하므로 소스에서는 `./x.ts` 로 import 하고,
+    // tsc 가 빌드할 때 `./x.js` 로 바꿔 쓴다 (TS 5.7 rewriteRelativeImportExtensions).
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["dist"]
+}
