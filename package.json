@@ -1,0 +1,42 @@
+{
+  "name": "trip-mate",
+  "private": true,
+  "version": "0.1.0",
+  "description": "여행 모임 하나를 일정표·사진·정산·문서로 함께 굴리는 웹 서비스",
+  "type": "module",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "node -e \"console.log('\\n터미널 두 개로 나눠 실행하세요:\\n  npm run dev:api   → http://localhost:4000\\n  npm run dev:web   → http://localhost:5173\\n\\n처음이라면 먼저:  npm run db:up && npm run db:migrate && npm run db:seed\\n')\"",
+    "dev:api": "npm run dev -w @tripmate/api",
+    "dev:web": "npm run dev -w @tripmate/web",
+    "build": "npm run build -w @tripmate/core && npm run build -w @tripmate/api && npm run build -w @tripmate/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "test:core": "npm run test -w @tripmate/core",
+    "test:api": "npm run test -w @tripmate/api",
+    "test:web": "npm run test -w @tripmate/web",
+    "test:db:up": "docker compose --profile test up -d db-test",
+    "lint": "npm run typecheck",
+    "db:up": "docker compose up -d db",
+    "db:down": "docker compose down",
+    "db:migrate": "npm run migrate -w @tripmate/api",
+    "db:seed": "npm run seed -w @tripmate/api",
+    "db:reset": "npm run reset -w @tripmate/api",
+    "docker:up": "docker compose --profile full up -d --build",
+    "docker:down": "docker compose --profile full down"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "esbuild@0.25.12": true
+  }
+}
