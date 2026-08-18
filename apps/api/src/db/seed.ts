@@ -120,12 +120,11 @@ const DAYS: Array<{ n: number; label: string; items: SeedItem[] }> = [
 
 interface SeedFolder {
   name: string;
-  pub: boolean;
   kids?: SeedFolder[];
 }
 
 /**
- * 폴더 트리. 공개 폴더에는 새 토큰을 발급한다.
+ * 폴더 트리.
  *
  * ⚠ 사진(photos) 행은 넣지 않는다.
  *   실제 파일은 사용자가 Drive 연동 후 직접 올린다. 파일 없이 행만 넣으면
@@ -135,15 +134,27 @@ interface SeedFolder {
 const FOLDERS: SeedFolder[] = [
   {
     name: "Day 1 · 성산",
-    pub: true,
-    kids: [
-      { name: "일출봉", pub: false },
-      { name: "저녁 · 흑돼지", pub: false },
-    ],
+    kids: [{ name: "일출봉" }, { name: "저녁 · 흑돼지" }],
   },
-  { name: "Day 2 · 우도", pub: false },
-  { name: "지현의 드론샷", pub: true },
-  { name: "영수증", pub: false },
+  { name: "Day 2 · 우도" },
+  { name: "지현의 드론샷" },
+  { name: "영수증" },
+];
+
+/**
+ * 공유 묶음. 공유는 폴더가 아니라 묶음에 붙는다 —
+ * 한 모임에 용도별로 여러 개를 두고, 묶음마다 포함할 폴더를 골라 담는다.
+ *
+ * 두 가지 모양을 다 보여주려고 일부러 이렇게 짰다.
+ *   · "부모님께"  — 하위까지 통째로 (나중에 만든 하위 폴더도 자동으로 따라 나간다)
+ *   · "동반 모임" — 그 폴더 하나만
+ *
+ * ⚠ "영수증" 은 어느 묶음에도 담지 않는다. 밖에서 열리면 안 되는 폴더가
+ *   실제로 안 열리는지 확인할 대조군이 시드에 있어야 한다.
+ */
+const SHARES: Array<{ label: string; entries: Array<{ folder: string; deep: boolean }> }> = [
+  { label: "부모님께", entries: [{ folder: "Day 1 · 성산", deep: true }] },
+  { label: "동반 모임", entries: [{ folder: "지현의 드론샷", deep: false }] },
 ];
 
 const DOC_TITLE = "제주 계획서";
@@ -310,8 +321,6 @@ export async function seed(log: (s: string) => void): Promise<{ groupId: string 
         parent_id: null,
         name: GROUP_NAME, // 루트 폴더 이름 = 모임 제목. 항상 같은 값이다
         slug: slugify(GROUP_NAME),
-        pub: false,
-        share_token: null,
         created_by: ownerUserId,
       })
       .execute();
@@ -330,6 +339,11 @@ export async function seed(log: (s: string) => void): Promise<{ groupId: string 
           group_id: groupId,
           day_id: dayIds.get(day.n)!,
           time: it.time,
+          // 시드는 시작 시각만 넣는다. 종료 시각과 체크인/체크아웃 시각은
+          // 사용자가 직접 넣어 보는 값이라 비워 둔다 — 비어 있어도 화면이 깨지지 않아야 한다.
+          end_time: "",
+          check_in_time: "",
+          check_out_time: "",
           cat: it.cat,
           title: it.title,
           meta: it.meta,
@@ -375,8 +389,8 @@ export async function seed(log: (s: string) => void): Promise<{ groupId: string 
   await db.updateTable("groups").set({ drive_folder_id: rootDriveId }).where("id", "=", groupId).execute();
 
   const takenSlugs = new Set<string>([slugify(GROUP_NAME)]);
+  const folderIdByName = new Map<string, string>();
   let folderCount = 0;
-  let publicCount = 0;
 
   async function makeFolders(list: SeedFolder[], parentId: string, parentDriveId: string): Promise<void> {
     for (const f of list) {
@@ -392,21 +406,38 @@ export async function seed(log: (s: string) => void): Promise<{ groupId: string 
           parent_id: parentId,
           name: f.name,
           slug,
-          pub: f.pub,
-          // 공개할 때마다 새로 발급한다. 폴더 ID 에서 파생시키지 않는다
-          share_token: f.pub ? randomToken() : null,
           drive_folder_id: driveId,
           created_by: ownerUserId,
         })
         .returning("id")
         .executeTakeFirstOrThrow();
       folderCount++;
-      if (f.pub) publicCount++;
+      folderIdByName.set(f.name, row.id);
 
       if (f.kids?.length) await makeFolders(f.kids, row.id, driveId);
     }
   }
   await makeFolders(FOLDERS, root.id, rootDriveId);
+
+  // ── 공유 묶음 ─────────────────────────────────────────────────────
+  // 토큰은 묶음 id 나 폴더 id 에서 파생시키지 않는다. 공유할 때마다 난수로 뽑는다 —
+  // 중지했다 다시 공유했을 때 예전에 뿌린 링크가 되살아나면 안 되기 때문이다.
+  for (const sh of SHARES) {
+    const link = await db
+      .insertInto("share_links")
+      .values({ group_id: groupId, label: sh.label, token: randomToken(), created_by: ownerUserId })
+      .returning("id")
+      .executeTakeFirstOrThrow();
+
+    for (const e of sh.entries) {
+      const fid = folderIdByName.get(e.folder);
+      if (!fid) throw new Error(`시드 오류: 공유에 적힌 폴더가 없습니다 — ${e.folder}`);
+      await db
+        .insertInto("share_link_folders")
+        .values({ link_id: link.id, folder_id: fid, include_descendants: e.deep })
+        .execute();
+    }
+  }
 
   // ── 문서 ──────────────────────────────────────────────────────────
   // 문서는 모임 멤버 전용이다. 공개 토글도 토큰도 없다.
@@ -423,7 +454,7 @@ export async function seed(log: (s: string) => void): Promise<{ groupId: string 
   }
 
   log(`  · 멤버 ${MEMBERS.length}명 · 일차 ${days.length}일 · 일정 ${itemCount}건`);
-  log(`  · 폴더 ${folderCount}개 (공개 ${publicCount}개) · 문서 1개 (블록 ${DOC_BLOCKS.length}개)`);
+  log(`  · 폴더 ${folderCount}개 · 공유 묶음 ${SHARES.length}개 · 문서 1개 (블록 ${DOC_BLOCKS.length}개)`);
   log("  · 사진 파일은 넣지 않았습니다 — 실제 미디어는 Drive 연동 후 직접 올립니다");
 
   return { groupId };
