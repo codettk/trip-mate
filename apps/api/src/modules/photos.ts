@@ -9,7 +9,6 @@
  * EXIF 촬영 시각은 정렬(촬영순)에만 쓴다. 없으면 업로드 시각을 촬영 시각으로 믿고 배지로 알린다.
  */
 
-import { timingSafeEqual } from "node:crypto";
 import exifr from "exifr";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
@@ -19,6 +18,7 @@ import { db } from "../db/client.ts";
 import { env, MAX_UPLOAD_BYTES } from "../env.ts";
 import { badRequest, forbidden, notFound, tooLarge } from "../lib/http.ts";
 import { breadcrumb, folderOrThrow, type FolderRow } from "../services/folders.ts";
+import { findShareByToken, sharedIdsOf } from "../services/shares.ts";
 import { ALLOWED_MIME, storage } from "../storage/index.ts";
 
 // ── 응답 모양 ───────────────────────────────────────────────────────
@@ -168,8 +168,31 @@ async function ensureStorageFolder(groupId: string, folder: FolderRow): Promise<
 
 // ── 라우트 ──────────────────────────────────────────────────────────
 
+const groupParams = z.object({ gid: z.string().uuid() });
 const groupFolderParams = z.object({ gid: z.string().uuid(), fid: z.string().uuid() });
 const groupPhotoParams = z.object({ gid: z.string().uuid(), pid: z.string().uuid() });
+
+/**
+ * 사진 수정 본문.
+ * `takenAt` 은 **null 을 명시적으로 받는다** — 잘못 넣은 촬영 시각을 되돌려야 하기 때문이다.
+ * 키가 아예 없으면(undefined) 건드리지 않는다. 둘을 구분하지 않으면 이름만 고칠 때 촬영 시각이 날아간다.
+ */
+const patchPhotoBody = z.object({
+  name: z.string().trim().min(1, "이름을 입력하세요").max(200, "이름은 200자까지입니다").optional(),
+  takenAt: z
+    .union([z.string(), z.null()])
+    .optional()
+    .transform((v, ctx) => {
+      if (v === undefined || v === null) return v;
+      const d = new Date(v);
+      if (Number.isNaN(d.getTime())) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "촬영 시각이 올바르지 않습니다" });
+        return z.NEVER;
+      }
+      return d;
+    }),
+  folderId: z.string().uuid().optional(),
+});
 
 export async function photoRoutes(app: FastifyInstance): Promise<void> {
   /**
@@ -271,6 +294,127 @@ export async function photoRoutes(app: FastifyInstance): Promise<void> {
     return { ok: true };
   });
 
+  /**
+   * 수정 — 이름 · 촬영 시각 · 폴더. 사진 상세 모달에서 그 자리에 고친다.
+   * 권한은 삭제와 같다(올린 사람 또는 방장) — 남이 올린 사진을 조용히 옮기거나 이름을 바꾸면
+   * 누가 뭘 했는지 알 수 없게 된다.
+   */
+  app.patch("/api/groups/:gid/photos/:pid", async (req) => {
+    const user = await requireAuth(req);
+    const { gid, pid } = groupPhotoParams.parse(req.params);
+    const me = await requireMember(user, gid);
+
+    const body = patchPhotoBody.safeParse(req.body ?? {});
+    if (!body.success) throw badRequest(body.error.issues[0]?.message ?? "입력값이 올바르지 않습니다");
+    const patch = body.data;
+    if (patch.name === undefined && patch.takenAt === undefined && patch.folderId === undefined) {
+      throw badRequest("바꿀 값이 없습니다");
+    }
+
+    const p = await db
+      .selectFrom("photos")
+      .select(["id", "name", "folder_id", "storage_key", "uploaded_by"])
+      .where("id", "=", pid)
+      .where("group_id", "=", gid)
+      .executeTakeFirst();
+    if (!p) throw notFound("사진을 찾을 수 없습니다");
+    if (p.uploaded_by !== user.id && !me.isOwner) {
+      throw forbidden("올린 사람 또는 방장만 수정할 수 있습니다");
+    }
+
+    // 다른 모임 폴더로는 옮길 수 없다. folderOrThrow 가 모임까지 확인한다.
+    if (patch.folderId !== undefined) await folderOrThrow(gid, patch.folderId);
+
+    const set: { name?: string; taken_at?: Date | null; folder_id?: string } = {};
+    if (patch.name !== undefined) set.name = patch.name;
+    if (patch.folderId !== undefined) set.folder_id = patch.folderId;
+    // null 이면 촬영 시각을 지운다 → 다시 업로드 시각을 촬영 시각으로 믿는 상태(takenFallback)로 돌아간다.
+    // 잘못 넣은 값을 되돌릴 방법이 없으면 안 되기 때문에 명시적으로 null 을 받는다.
+    if (patch.takenAt !== undefined) set.taken_at = patch.takenAt;
+
+    const row = await db
+      .updateTable("photos")
+      .set(set)
+      .where("id", "=", pid)
+      .returning(PHOTO_COLUMNS)
+      .executeTakeFirstOrThrow();
+
+    // 저장소 쪽 이름도 따라간다 — 모임 이름 → Drive 폴더명 규칙과 같은 이유다.
+    // 저장소만 옛 이름으로 남으면 나중에 Drive 를 직접 열어 대조할 때 어느 파일인지 알 수 없다.
+    // storage_key 는 바뀌지 않으므로 이미 나간 링크가 깨지지 않는다.
+    //
+    // 실패해도 요청을 세우지 않는다. DB 가 정본이고 화면에 보이는 이름은 이미 바뀌었다 —
+    // Drive 쪽 이름 하나 때문에 사용자의 수정을 되돌리는 게 더 나쁘다.
+    if (patch.name !== undefined && patch.name !== p.name) {
+      const s = await storage();
+      await s.renameFile(p.storage_key, patch.name).catch((e: unknown) => {
+        req.log.warn({ err: e, photoId: pid }, "저장소 파일명 변경 실패 — DB 이름만 바뀝니다");
+      });
+    }
+
+    // ⚠ 폴더를 옮겨도 저장소 파일은 옮기지 않는다. 파일은 storage_key 로만 찾고
+    //   그 값은 그대로이므로 접근에 아무 차이가 없다. Drive 안의 배치만 옛 폴더에 남는다.
+
+    return { photo: photoView(row) };
+  });
+
+  /**
+   * 여러 장 이동 — 그리드에서 골라 한 번에 옮긴다.
+   * 한 장이 막혀도 나머지는 옮긴다. 업로드 라우트와 같은 모양(moved/failed)으로 돌려준다 —
+   * 부분 실패를 통째 실패로 만들면 사용자가 뭐가 됐는지 알 수 없다.
+   */
+  app.post("/api/groups/:gid/photos/move", async (req) => {
+    const user = await requireAuth(req);
+    const { gid } = groupParams.parse(req.params);
+    const me = await requireMember(user, gid);
+
+    const body = z
+      .object({
+        ids: z.array(z.string().uuid()).min(1, "옮길 사진을 고르세요"),
+        folderId: z.string().uuid(),
+      })
+      .safeParse(req.body ?? {});
+    if (!body.success) throw badRequest(body.error.issues[0]?.message ?? "입력값이 올바르지 않습니다");
+
+    const target = await folderOrThrow(gid, body.data.folderId);
+
+    const ids = [...new Set(body.data.ids)];
+    const rows = await db
+      .selectFrom("photos")
+      .select(["id", "name", "folder_id", "uploaded_by"])
+      .where("id", "in", ids)
+      .where("group_id", "=", gid)
+      .execute();
+    const byId = new Map(rows.map((r) => [r.id, r]));
+
+    const movable: string[] = [];
+    const failed: { id: string; name: string | null; reason: string }[] = [];
+    for (const id of ids) {
+      const r = byId.get(id);
+      if (!r) {
+        failed.push({ id, name: null, reason: "사진을 찾을 수 없습니다" });
+        continue;
+      }
+      if (r.uploaded_by !== user.id && !me.isOwner) {
+        failed.push({ id, name: r.name, reason: "올린 사람 또는 방장만 옮길 수 있습니다" });
+        continue;
+      }
+      if (r.folder_id === target.id) continue; // 이미 그 폴더다. 실패도 이동도 아니다
+      movable.push(id);
+    }
+
+    const moved = movable.length
+      ? await db
+          .updateTable("photos")
+          .set({ folder_id: target.id })
+          .where("id", "in", movable)
+          .returning(PHOTO_COLUMNS)
+          .execute()
+      : [];
+
+    return { moved: moved.map(photoView), failed };
+  });
+
   // ── 미디어 스트림 ─────────────────────────────────────────────────
   // 이미지 자체도 TripMate URL 로 나간다. Drive 링크·서명 URL 을 브라우저에 주지 않는다.
   app.get("/api/media/:pid", (req, reply) => serveMedia(req, reply));
@@ -287,9 +431,12 @@ export async function photoRoutes(app: FastifyInstance): Promise<void> {
 /**
  * 미디어를 볼 수 있는 경우는 둘뿐이다.
  *  1. 로그인한 사람이 그 모임의 안 나간 멤버다 (멤버는 모든 폴더를 그대로 본다)
- *  2. ?t= 토큰이 그 사진이 **직접 들어 있는 폴더**의 share_token 과 일치하고 그 폴더가 공개다
+ *  2. ?t= 토큰이 가리키는 **묶음의 폴더 집합에 이 사진의 폴더가 들어 있다**
  *
- * ⚠ 조상 폴더의 토큰으로는 열리지 않는다. 뷰어는 공개된 그 폴더의 미디어만 본다.
+ * ⚠ 여기가 사진 유출을 막는 마지막 문이다. 폴더가 묶음 집합 밖이면 그 토큰으로 열리지 않는다.
+ *   집합을 푸는 계산은 core 의 `resolveShared` 한 벌뿐이다(services/shares.ts) —
+ *   공유 모달이 "이 폴더들이 나갑니다" 라고 센 것과 이 검사가 다르면 그 차이가 곧 유출이다.
+ *   토큰 비교(safeEqual)도 findShareByToken 안에 있다. 규칙을 이 파일에 복제하지 않는다.
  */
 async function canSeeMedia(
   user: AuthUser | null,
@@ -308,19 +455,10 @@ async function canSeeMedia(
   }
 
   if (!token) return false;
-  const f = await db
-    .selectFrom("folders")
-    .select(["pub", "share_token"])
-    .where("id", "=", photo.folder_id) // ← 직속 폴더만. 조상은 보지 않는다
-    .executeTakeFirst();
-  return !!f && f.pub && !!f.share_token && safeEqual(f.share_token, token);
-}
-
-/** 토큰 비교는 길이·내용을 시간차로 흘리지 않게 한다. */
-function safeEqual(a: string, b: string): boolean {
-  const x = Buffer.from(a);
-  const y = Buffer.from(b);
-  return x.length === y.length && timingSafeEqual(x, y);
+  const link = await findShareByToken(photo.group_id, token);
+  if (!link) return false;
+  const shared = await sharedIdsOf(link);
+  return shared.has(photo.folder_id);
 }
 
 const mediaParams = z.object({ pid: z.string().uuid() });

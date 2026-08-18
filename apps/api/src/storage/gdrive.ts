@@ -61,6 +61,18 @@ export class GoogleDriveAdapter implements StorageAdapter {
     });
   }
 
+  /**
+   * 사진 이름을 바꾸면 Drive 파일명도 따라간다.
+   * `key` 가 곧 fileId 라 이름을 바꿔도 식별자는 그대로다 — 링크가 깨지지 않는다.
+   */
+  async renameFile(key: string, name: string): Promise<void> {
+    await this.drive().files.update({
+      fileId: key,
+      requestBody: { name },
+      supportsAllDrives: true,
+    });
+  }
+
   async moveFolder(folderId: string, newParentId: string): Promise<void> {
     const cur = await this.drive().files.get({
       fileId: folderId,

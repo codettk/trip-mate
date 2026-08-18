@@ -91,6 +91,19 @@ export class LocalAdapter implements StorageAdapter {
     return createReadStream(path);
   }
 
+  /**
+   * 로컬 저장소에서는 할 일이 없다.
+   *
+   * 디스크 파일 이름은 업로드할 때 뽑은 UUID 라 사람이 볼 일이 없고,
+   * 그게 곧 `storage_key` 다. 여기서 파일을 실제로 리네임하면 key 가 어긋나
+   * 이미 저장된 사진을 못 찾게 된다. 표시용 이름은 DB(`photos.name`)가 정본이다.
+   *
+   * Drive 어댑터에서만 실제로 의미가 있다 — 사람이 Drive 를 직접 열어 보기 때문이다.
+   */
+  async renameFile(): Promise<void> {
+    // 의도적으로 비어 있다
+  }
+
   async deleteFile(key: string): Promise<void> {
     const path = resolve(ROOT, key);
     if (!path.startsWith(ROOT)) return;

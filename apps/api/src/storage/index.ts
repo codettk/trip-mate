@@ -45,6 +45,16 @@ export interface StorageAdapter {
   /** 서버가 받아서 전달한다. 절대 URL 을 돌려주지 않는다. */
   stream(key: string): Promise<Readable>;
 
+  /**
+   * 사진 이름을 바꾸면 저장소 쪽 이름도 따라간다.
+   *
+   * 모임 이름 → Drive 폴더명 규칙과 같은 이유다 — 저장소만 옛 이름으로 남으면
+   * 나중에 Drive 를 직접 열어 대조할 때 어느 파일인지 알 수 없다.
+   *
+   * `key` 는 바뀌지 않는다. 이름은 표시용이고 식별자가 아니다.
+   */
+  renameFile(key: string, name: string): Promise<void>;
+
   deleteFile(key: string): Promise<void>;
 
   /** 연결이 살아 있는가 — /api/health 에서 확인한다 */
