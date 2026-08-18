@@ -109,7 +109,7 @@
               "id": "giR9x",
               "name": "Stat Value",
               "fill": "$t1",
-              "content": "₩ 1,666,000",
+              "content": "₩ 1,658,570",
               "fontFamily": "$sans",
               "fontSize": 19,
               "fontWeight": "700",
@@ -118,9 +118,9 @@
             {
               "type": "text",
               "id": "ieSke",
-              "name": "Stat Sub",
+              "name": "내 부담액",
               "fill": "$t3",
-              "content": "1인당 평균 ₩ 416,500",
+              "content": "내 부담액 ₩ 415,214",
               "fontFamily": "$sans",
               "fontSize": 11,
               "fontWeight": "normal"
