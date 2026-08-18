@@ -12,6 +12,7 @@
  * `settlement-math.test.ts` 가 이 픽스처를 @tripmate/core 의 settle() 결과와 대조한다.
  */
 
+import { crossesMidnight, durationMinutes, nightIndex, resolveShared } from "@tripmate/core";
 import type {
   DocDetail,
   DocSummary,
@@ -26,6 +27,9 @@ import type {
   Me,
   Member,
   Settlement,
+  ShareEntryDto,
+  ShareList,
+  ShareViewer,
 } from "../api/types.ts";
 
 export const GID = "g-jeju";
@@ -116,6 +120,11 @@ interface ItemSeed {
   checkIn?: string;
   checkOut?: string;
   nights?: number;
+  /** 종료 시각. 비우면 시작 시각만 있는 항목이다 */
+  endTime?: string;
+  /** cat==="stay" 전용. 날짜는 checkIn/checkOut 이 들고 있다 */
+  checkInTime?: string;
+  checkOutTime?: string;
 }
 
 const ITEM_SEEDS: ItemSeed[] = [
@@ -155,6 +164,7 @@ function toItem(s: ItemSeed): Item {
     dayN: day.n,
     date: day.date,
     time: s.time,
+    endTime: s.endTime ?? "",
     cat: s.cat,
     title: s.title,
     meta: s.meta,
@@ -163,6 +173,12 @@ function toItem(s: ItemSeed): Item {
     checkIn: s.checkIn ?? null,
     checkOut: s.checkOut ?? null,
     nights: s.nights ?? 0,
+    checkInTime: s.cat === "stay" ? (s.checkInTime ?? "") : "",
+    checkOutTime: s.cat === "stay" ? (s.checkOutTime ?? "") : "",
+    // 서버가 core 로 계산해 내려주는 값이다. 픽스처도 같은 함수로 만든다 —
+    // 손으로 적으면 화면이 실제와 다른 값을 보고도 통과해 버린다.
+    nextDay: crossesMidnight(s.time, s.endTime ?? ""),
+    duration: durationMinutes(s.time, s.endTime ?? ""),
     split,
     // split=false 면 금액·결제자·대상이 실제로 비어 있다 (숨겨진 금액을 남기지 않는다)
     cost: split ? (s.cost ?? 0) : 0,
@@ -177,7 +193,16 @@ function toItem(s: ItemSeed): Item {
 export const items: Item[] = ITEM_SEEDS.map(toItem);
 
 /** 09-14 에는 체크아웃하는 숙소와 새로 체크인하는 숙소가 겹친다 → 칩 2개 */
-const STAYS: Record<number, Array<{ itemId: string; title: string; phase: "in" | "mid" | "out" }>> = {
+/**
+ * 숙소 칩. 서버가 core 의 nightIndex() 로 계산해 내려주는 값이라
+ * 여기서도 같은 함수로 만든다 — 손으로 적으면 화면이 틀린 값을 보고도 통과한다.
+ */
+type StaySeed = { itemId: string; title: string; phase: "in" | "mid" | "out" };
+const STAY_SPAN: Record<string, { checkIn: string; checkOut: string; inT: string; outT: string }> = {
+  i5: { checkIn: "2026-09-12", checkOut: "2026-09-14", inT: "15:00", outT: "11:00" },
+  i12: { checkIn: "2026-09-14", checkOut: "2026-09-16", inT: "15:00", outT: "11:00" },
+};
+const STAYS: Record<number, StaySeed[]> = {
   1: [{ itemId: "i5", title: "씨에스호텔 제주", phase: "in" }],
   2: [{ itemId: "i5", title: "씨에스호텔 제주", phase: "mid" }],
   3: [
@@ -195,7 +220,17 @@ export const itinerary: Itinerary = {
     date: d.date,
     dow: d.dow,
     label: d.label,
-    stays: STAYS[d.n] ?? [],
+    stays: (STAYS[d.n] ?? []).map((c) => {
+      const sp = STAY_SPAN[c.itemId]!;
+      return {
+        ...c,
+        nightIndex: nightIndex(d.date, sp.checkIn, sp.checkOut),
+        checkIn: sp.checkIn,
+        checkOut: sp.checkOut,
+        checkInTime: sp.inT,
+        checkOutTime: sp.outT,
+      };
+    }),
     items: items.filter((i) => i.dayN === d.n),
   })),
 };
@@ -242,33 +277,73 @@ export const settlement: Settlement = {
 
 /* ══════════ 폴더 ══════════ */
 
+/**
+ * 공유는 폴더가 아니라 묶음(share link)에 붙는다.
+ * 그래서 폴더 노드에는 `pub`/`token` 이 없고, 대신 이 폴더를 담고 있는 묶음 id 들이
+ * `sharedIn` 으로 온다 — 비어 있지 않으면 그 폴더의 미디어가 밖으로 나가는 중이다.
+ */
 const folder = (
   id: string,
   name: string,
   slug: string,
   parentId: string | null,
-  pub: boolean,
   children: FolderNodeDto[] = [],
 ): FolderNodeDto => ({
   id,
   name,
   slug,
   parentId,
-  pub,
-  token: pub ? `tok-${slug}` : null,
   photoCount: 0,
+  sharedIn: [],
   children,
 });
 
-export const folderRoot: FolderNodeDto = folder("f-root", GROUP_NAME, "제주도-4박-5일", null, false, [
-  folder("f-day1", "Day 1 · 성산", "day-1-성산", "f-root", true, [
-    folder("f-sunrise", "일출봉", "일출봉", "f-day1", false),
-    folder("f-dinner", "저녁 · 흑돼지", "저녁-흑돼지", "f-day1", false),
+export const SHARE_PARENTS = "sl-parents";
+export const SHARE_MATES = "sl-mates";
+export const SHARE_TOKEN_PARENTS = "tok-parents";
+export const SHARE_TOKEN_MATES = "tok-mates";
+
+const rawRoot: FolderNodeDto = folder("f-root", GROUP_NAME, "제주도-4박-5일", null, [
+  folder("f-day1", "Day 1 · 성산", "day-1-성산", "f-root", [
+    folder("f-sunrise", "일출봉", "일출봉", "f-day1"),
+    folder("f-dinner", "저녁 · 흑돼지", "저녁-흑돼지", "f-day1"),
   ]),
-  folder("f-day2", "Day 2 · 우도", "day-2-우도", "f-root", false),
-  folder("f-drone", "지현의 드론샷", "지현의-드론샷", "f-root", true),
-  folder("f-receipt", "영수증", "영수증", "f-root", false),
+  folder("f-day2", "Day 2 · 우도", "day-2-우도", "f-root"),
+  folder("f-drone", "지현의 드론샷", "지현의-드론샷", "f-root"),
+  folder("f-receipt", "영수증", "영수증", "f-root"),
 ]);
+
+/**
+ * 시드와 같은 묶음 둘.
+ *   · 부모님께  — Day 1 을 하위까지 (일출봉·저녁이 자동으로 딸려 나간다)
+ *   · 동반 모임 — 드론샷 하나만
+ *
+ * ⚠ `영수증` 은 어느 묶음에도 담지 않는다. 밖에서 열리면 안 되는 폴더가
+ *   실제로 안 열리는지 확인할 대조군이 픽스처에도 있어야 한다.
+ */
+export const shareEntries: Record<string, ShareEntryDto[]> = {
+  [SHARE_PARENTS]: [{ folderId: "f-day1", includeDescendants: true }],
+  [SHARE_MATES]: [{ folderId: "f-drone", includeDescendants: false }],
+};
+
+/** `sharedIn` 은 손으로 적지 않는다 — core 의 resolveShared 로 만든다. */
+function withShared(node: FolderNodeDto, flat: FolderNodeDto[]): FolderNodeDto {
+  const owners = new Map<string, string[]>();
+  for (const [linkId, entries] of Object.entries(shareEntries)) {
+    for (const fid of resolveShared(entries, flat.map((f) => ({ id: f.id, parentId: f.parentId })))) {
+      owners.set(fid, [...(owners.get(fid) ?? []), linkId]);
+    }
+  }
+  const walk = (n: FolderNodeDto): FolderNodeDto => ({
+    ...n,
+    sharedIn: owners.get(n.id) ?? [],
+    children: n.children.map(walk),
+  });
+  return walk(node);
+}
+
+const rawFlat = ((n: FolderNodeDto): FolderNodeDto[] => [n, ...n.children.flatMap((c) => [c, ...c.children])])(rawRoot);
+export const folderRoot: FolderNodeDto = withShared(rawRoot, rawFlat);
 
 const flatten = (n: FolderNodeDto): FolderNodeDto[] => [n, ...n.children.flatMap(flatten)];
 export const allFolders = flatten(folderRoot);
@@ -284,19 +359,43 @@ export function folderView(id: string): FolderView {
     cur = parentId ? allFolders.find((f) => f.id === parentId) : undefined;
   }
   return {
-    folder: {
-      id: node.id,
-      name: node.name,
-      slug: node.slug,
-      pub: node.pub,
-      // ⚠ Drive 링크가 아니라 TripMate 뷰어 주소다
-      shareUrl: node.pub ? `https://tripmate.app/${GID}/view/${node.slug}?t=${node.token ?? ""}` : null,
-    },
+    folder: { id: node.id, name: node.name, slug: node.slug, sharedIn: node.sharedIn },
     breadcrumb: crumb,
-    children: node.children.map((c) => ({ id: c.id, name: c.name, slug: c.slug, pub: c.pub, photoCount: c.photoCount })),
+    children: node.children.map((c) => ({
+      id: c.id,
+      name: c.name,
+      slug: c.slug,
+      sharedIn: c.sharedIn,
+      photoCount: c.photoCount,
+    })),
     photos: [],
   };
 }
+
+/** 공유 묶음 목록 응답. url 안에만 토큰이 있고 Drive 주소는 어디에도 없다. */
+export const shareList: ShareList = {
+  shares: [
+    {
+      id: SHARE_PARENTS,
+      label: "부모님께",
+      url: `https://tripmate.app/${GID}/view/${SHARE_TOKEN_PARENTS}`,
+      entries: shareEntries[SHARE_PARENTS]!,
+      // 하위까지 담았으므로 일출봉·저녁이 함께 센다 — 고른 것과 나가는 것이 같아야 한다
+      folderCount: 3,
+      photoCount: 0,
+      createdAt: "2026-08-19T00:00:00.000Z",
+    },
+    {
+      id: SHARE_MATES,
+      label: "동반 모임",
+      url: `https://tripmate.app/${GID}/view/${SHARE_TOKEN_MATES}`,
+      entries: shareEntries[SHARE_MATES]!,
+      folderCount: 1,
+      photoCount: 0,
+      createdAt: "2026-08-19T00:01:00.000Z",
+    },
+  ],
+};
 
 /* ══════════ 문서 ══════════ */
 
@@ -382,19 +481,21 @@ export const settleView = {
   closed: settlement.closed,
 };
 
-/** 공개 폴더 뷰어 응답. 이미지 주소는 언제나 /api/media/:id 다 — Drive 링크가 아니다. */
-export const folderViewer = {
-  folder: { name: "지현의 드론샷" },
+/**
+ * 공개 폴더 뷰어 응답. **묶음에 담긴 폴더만** 나온다.
+ * 이미지 주소는 언제나 /api/media/:id 다 — Drive 링크가 아니다.
+ * memberView 가 참이어도 내용은 그대로 온다 (자동 이동 대신 배너를 띄운다).
+ */
+export const folderViewer: ShareViewer = {
+  memberView: false,
+  groupId: GID,
   group: { name: GROUP_NAME },
-  photos: [] as Array<{
-    id: string;
-    name: string;
-    mime: string;
-    uploadedAt: string;
-    takenAt: string;
-    takenFallback: boolean;
-    url: string;
-  }>,
+  link: { label: "동반 모임" },
+  folder: { name: "지현의 드론샷", slug: "지현의-드론샷" },
+  breadcrumb: [{ name: "지현의 드론샷", slug: "지현의-드론샷" }],
+  folders: [],
+  photos: [],
+  sort: "up",
 };
 
 export const health = {

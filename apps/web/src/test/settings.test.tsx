@@ -61,9 +61,14 @@ describe("설정 화면", () => {
     const line = screen.getByText("원 단위 반올림").closest(".li")!;
     expect(line.querySelectorAll("button, select, input").length).toBe(0);
 
-    // 화면 전체에도 반올림/환율/저장소를 고르는 select 가 없다
+    // 화면에 있는 select 는 **기본 통화 하나뿐**이다.
+    // 반올림 단위·환율 출처·저장소를 고르는 select 가 생기면 여기서 걸린다 —
+    // 반올림은 원 단위 고정이고, 환율과 저장소는 서버가 정한다.
     const selects = Array.from(container.querySelectorAll("select"));
-    expect(selects.length).toBe(0);
+    expect(selects.length).toBe(1);
+    const cur = selects[0]!;
+    expect(cur.getAttribute("id")).toBe(screen.getByText("기본 통화").getAttribute("for"));
+    expect(Array.from(cur.options).map((o) => o.value)).toContain("KRW");
   });
 
   it("저장소와 환율은 읽기 전용이다 (시크릿이 브라우저로 내려오지 않는다)", async () => {

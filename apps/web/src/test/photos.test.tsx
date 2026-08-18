@@ -4,10 +4,12 @@
  * 사진 화면은 앨범 목록이 아니라 **폴더 탐색기**다 — 트리 + 브레드크럼 + 폴더 카드 + 그리드.
  *
  * 확인하는 확정 규칙:
- *  · 최상위 폴더 이름 = 여행 모임 제목, 최상위는 공개할 수 없다
+ *  · 최상위 폴더 이름 = 여행 모임 제목 (지울 수 없다)
+ *  · 공유는 폴더가 아니라 **묶음**에 붙는다 — 폴더별 공개 토글이 없다
  *  · 밖으로 나가는 주소는 TripMate 뷰어 링크뿐이다 — Drive 링크·서명 URL 이 화면에 없다
+ *  · 공유 모달이 말하는 폴더 수·사진 수가 실제로 나가는 것과 같다
  *  · 새 폴더는 목록 위 인라인 입력이다 (폼 페이지도 모달도 아니다)
- *  · 비공개로 되돌리는 확인은 브라우저 confirm 이 아니라 모달이다
+ *  · 중지·주소 재발급 확인은 브라우저 confirm 이 아니라 모달이다
  *  · 정렬은 업로드순이 기본이고 촬영순을 고를 수 있다
  */
 
@@ -47,64 +49,91 @@ describe("사진 화면", () => {
     await waitFor(() => expect((screen.getByLabelText(/정렬/) as HTMLSelectElement).value).toBe("taken"));
   });
 
-  it("최상위 폴더는 공개할 수 없고 삭제 버튼도 없다", async () => {
+  it("최상위 폴더는 삭제할 수 없지만 공유는 담을 수 있다", async () => {
     const { container } = await openPhotos();
     await waitFor(() => expect(container.querySelectorAll(".folders .fcard").length).toBe(4));
 
+    // 루트는 어느 묶음에도 담기지 않았다 → 공유 중이 아니다
     expect(screen.getByText("비공개 · 모임 멤버만")).toBeTruthy();
-    expect(visibleText()).toContain("최상위 폴더는 공개할 수 없습니다");
+    expect(visibleText()).toContain("최상위 폴더는 이름이 여행 모임 제목이고 지울 수 없습니다");
+
     const labels = actionLabels();
+    // 폴더별 공개 토글은 사라졌다 — 공유는 묶음 단위다
     expect(labels.some((l) => l.includes("공개로 전환"))).toBe(false);
+    expect(labels.some((l) => l.includes("비공개로 전환"))).toBe(false);
+    // 루트도 묶음에 담을 수 있으니 공유 버튼은 있어야 한다
+    expect(labels.some((l) => l.trim() === "공유" || l.trim() === "공유 관리")).toBe(true);
     expect(labels.some((l) => l.includes("폴더 삭제"))).toBe(false);
   });
 
-  it("새 폴더는 모달이 아니라 목록 위 인라인 입력이다", async () => {
-    await openPhotos();
+  it("묶음에 담긴 폴더는 \"공유 중\"으로 표시된다", async () => {
+    // 시드와 같다: "부모님께" 가 Day 1 을 하위까지 담았다
+    await openPhotos("/f-day1");
+    expect(await screen.findByText(/공유 중 · 묶음 1개/)).toBeTruthy();
 
-    expect(screen.queryByLabelText("새 폴더 이름")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: /새 폴더/ }));
+    // 어느 묶음에도 없는 폴더는 비공개다 — 대조군이다
+    await openPhotos("/f-receipt");
+    expect(await screen.findByText("비공개 · 모임 멤버만")).toBeTruthy();
+  });
+  it("공유 모달은 TripMate 뷰어 링크만 내보낸다 (Drive 링크가 아니다)", async () => {
+    await openPhotos("/f-day1");
+    fireEvent.click(await screen.findByRole("button", { name: /^공유( 관리)?$/ }));
 
-    const input = await screen.findByLabelText("새 폴더 이름");
-    expect(input).toBeTruthy();
-    expect(screen.queryByRole("dialog")).toBeNull(); // 모달을 띄우지 않는다
-    expect(visibleText()).toContain("깊이 제한은 없습니다");
+    const dialog = await screen.findByRole("dialog");
+    // 묶음 목록은 모달을 연 뒤에 온다
+    await within(dialog).findByText("부모님께");
+    const link = F.shareList.shares[0]!.url;
+    expect(link.startsWith("https://tripmate.app/")).toBe(true);
+    expect(within(dialog).getByText(link)).toBeTruthy();
+
+    // 밖으로 나가는 주소는 이것뿐이다
+    expect(dialog.textContent).not.toContain("drive.google");
+    expect(dialog.textContent).not.toContain("googleusercontent");
+    // 미디어만 나간다는 사실을 화면이 말한다
+    expect(dialog.textContent).toContain("사진과 동영상만");
+    expect(dialog.textContent).toContain("고른 폴더 밖으로 나갈 수 없습니다");
   });
 
-  it("공개 폴더는 TripMate 뷰어 링크만 내보낸다 (Drive 링크가 아니다)", async () => {
+  it("공유 모달이 말하는 폴더 수가 실제로 나가는 폴더 수와 같다", async () => {
     await openPhotos("/f-day1");
+    fireEvent.click(await screen.findByRole("button", { name: /^공유( 관리)?$/ }));
+    const dialog = await screen.findByRole("dialog");
 
-    await screen.findByText("공개 · 외부 뷰어 링크 열림");
-    const link = F.folderView("f-day1").folder.shareUrl!;
-    expect(link.startsWith("https://tripmate.app/")).toBe(true);
-    expect(screen.getByText(link)).toBeTruthy();
+    // "부모님께" 는 Day 1 을 하위까지 담았다 → Day 1 + 일출봉 + 저녁 = 3개.
+     // 이 숫자가 서버의 folderCount 와 다르면 그게 유출이다.
+    expect(F.shareList.shares[0]!.folderCount).toBe(3);
+    await waitFor(() => expect(dialog.textContent).toContain("폴더 3개"));
 
-    const text = visibleText();
-    expect(text).not.toContain("drive.google.com");
-    expect(text).not.toContain("googleusercontent");
-    expect(text).toContain("비공개로 되돌리면 그 링크는 즉시 죽고");
+    // 딸려 나가는 폴더는 "자동" 으로 표시되고, 그 사실을 문장으로도 알린다
+    expect(within(dialog).getAllByText("자동").length).toBe(2);
+    expect(dialog.textContent).toContain("나중에 만드는 폴더도 자동으로 함께 나갑니다");
+  });
+
+  it("중지와 주소 재발급 확인은 브라우저 confirm 이 아니라 모달이다", async () => {
+    await openPhotos("/f-day1");
+    fireEvent.click(await screen.findByRole("button", { name: /^공유( 관리)?$/ }));
+    await screen.findByRole("dialog");
+
+    await screen.findByText("부모님께");
+    // 묶음이 둘이라 "중지" 도 둘이다. 첫 번째(부모님께) 를 누른다
+    fireEvent.click(screen.getAllByRole("button", { name: "중지" })[0]!);
+    const stop = await screen.findByRole("heading", { name: "공유 중지" });
+    const stopBox = stop.closest("[role=dialog]")!;
+    expect(stopBox.textContent).toContain("즉시");
+    expect(stopBox.textContent).toContain("사진은 지워지지 않습니다");
   });
 
   it("링크 복사는 클립보드에 TripMate 주소를 넣는다", async () => {
     await openPhotos("/f-day1");
-    await screen.findByText("공개 · 외부 뷰어 링크 열림");
+    fireEvent.click(await screen.findByRole("button", { name: /^공유( 관리)?$/ }));
+    await screen.findByRole("dialog");
 
-    fireEvent.click(screen.getByRole("button", { name: "링크 복사" }));
+    await screen.findByText("부모님께");
+    fireEvent.click(screen.getAllByRole("button", { name: "링크 복사" })[0]!);
     await waitFor(() => expect(clipboardWrites.length).toBe(1));
     expect(clipboardWrites[0]).toContain("tripmate.app");
-    expect(await screen.findByRole("button", { name: "복사됨" })).toBeTruthy();
+    expect(clipboardWrites[0]).not.toContain("drive.google");
   });
-
-  it("비공개로 되돌리는 확인은 브라우저 confirm 이 아니라 모달이다", async () => {
-    await openPhotos("/f-day1");
-    await screen.findByText("공개 · 외부 뷰어 링크 열림");
-
-    fireEvent.click(screen.getByRole("button", { name: /비공개로 전환/ }));
-    const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByRole("heading", { name: "비공개로 되돌릴까요?" })).toBeTruthy();
-    expect(dialog.textContent).toContain("즉시 죽습니다.");
-    expect(dialog.textContent).toContain("새 주소");
-  });
-
   it("중첩 깊이에 제한이 없어 하위 폴더로 계속 들어간다", async () => {
     const { container } = await openPhotos();
 

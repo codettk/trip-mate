@@ -34,6 +34,7 @@ export function defaultRoutes(overrides: RouteMap = {}): RouteMap {
     "GET /api/groups/:gid/settlement/share": F.settleShare,
     "GET /api/groups/:gid/folders": { root: F.folderRoot },
     "GET /api/groups/:gid/folders/:fid": ({ params }: Ctx) => F.folderView(params.fid ?? "f-root"),
+    "GET /api/groups/:gid/shares": F.shareList,
     "GET /api/groups/:gid/docs": { docs: [F.docSummary] },
     "GET /api/groups/:gid/docs/:did": F.docDetail,
     "GET /api/groups/:gid/invite": { invite: F.invite },
@@ -41,7 +42,10 @@ export function defaultRoutes(overrides: RouteMap = {}): RouteMap {
     "GET /api/groups/:gid/rates": { date: "2026-09-12", cur: "KRW", rate: 1 },
     "GET /api/health": F.health,
     "GET /api/invites/:code": F.invitePeek,
+    // 뷰어는 두 주소를 다 받는다 — 옛 링크가 죽으면 안 된다
     "GET /api/view/:gid/folder/:slug": F.folderViewer,
+    "GET /api/view/:gid/share/:token": F.folderViewer,
+    "GET /api/view/:gid/share/:token/:slug": F.folderViewer,
     "GET /api/view/:gid/settle/:token": F.settleView,
     ...overrides,
   };

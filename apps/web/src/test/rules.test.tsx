@@ -24,7 +24,7 @@ const SCREENS: Array<[name: string, route: string, ready: string]> = [
   ["사진", `/g/${F.GID}/photos`, "이 폴더에는 아직 미디어가 없습니다."],
   ["문서", `/g/${F.GID}/docs/doc1`, "제주 계획서"],
   ["설정", `/g/${F.GID}/settings`, "나간 멤버"],
-  ["폴더 뷰어", `/${F.GID}/view/지현의-드론샷?t=tok-drone`, "공유된 폴더"],
+  ["폴더 뷰어", `/${F.GID}/view/지현의-드론샷?t=tok-drone`, "공유된 사진"],
   ["정산 뷰어", `/${F.GID}/settle/${F.SETTLE_TOKEN}`, "정산 진행 중"],
 ];
 

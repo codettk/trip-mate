@@ -92,19 +92,28 @@ describe("일정 화면", () => {
     const { container } = await openItinerary();
 
     fireEvent.click(dayTab(container, 3));
-    const chips = container.querySelectorAll(".stayband .staychip");
+    const chips = container.querySelectorAll(".stayband .staycard");
     expect(chips.length).toBe(2);
-    expect(Array.from(chips).map((c) => c.textContent)).toEqual([
-      "씨에스호텔 제주체크아웃",
-      "서귀포 오션스테이체크인",
-    ]);
+
+    // 칩에는 이름 · 상태 · 기간이 들어간다. 여러 날에 걸친 숙소가 매일 똑같아 보이면
+    // 지금이 며칠째인지 알 수 없어서 정보를 늘렸다.
+    const texts = Array.from(chips).map((c) => c.textContent ?? "");
+    expect(texts[0]).toContain("씨에스호텔 제주");
+    expect(texts[0]).toContain("체크아웃");
+    expect(texts[1]).toContain("서귀포 오션스테이");
+    expect(texts[1]).toContain("체크인");
+
+    // 체크아웃하는 날은 묵지 않으므로 박 수를 쓰지 않는다
+    expect(texts[0]).not.toContain("박째");
+    // 체크인한 날은 1박째다
+    expect(texts[1]).toContain("1박째");
   });
 
   it("다른 날의 숙소 칩은 1개다", async () => {
     const { container } = await openItinerary();
     for (const n of [1, 2, 4, 5]) {
       fireEvent.click(dayTab(container, n));
-      expect(container.querySelectorAll(".stayband .staychip").length).toBe(1);
+      expect(container.querySelectorAll(".stayband .staycard").length).toBe(1);
     }
   });
 
