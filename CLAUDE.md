@@ -59,18 +59,37 @@ TripMate는 이 넷을 **하나의 여행 모임 = 하나의 작업 공간**으�
 > ⚠️ **공유는 TripMate가 관리한다. Drive 공유 링크를 밖으로 내보내지 않는다.**
 > Drive는 저장소일 뿐이다. 공유 규칙:
 > - **모임 멤버** — 모든 폴더를 그대로 본다. 폴더별 권한 설정이 없다.
-> - **모임 밖 사람** — 공개된 그 폴더의 **미디어만** 보는 **뷰어 전용** 링크.
->   하위·다른 폴더 이동 불가, 업로드·삭제 불가.
+> - **모임 밖 사람** — **공유 묶음**에 담긴 폴더의 **미디어만** 보는 **뷰어 전용** 링크.
+>   묶음 밖으로는 이동 불가, 업로드·삭제 불가.
 > - **외부로 나가는 것은 미디어(사진·동영상)뿐이다.** 문서는 공유 대상이 아니다.
 >   유일한 예외가 정산 공유 링크다(아래).
 >
-> 뷰어 주소는 `tripmate.app/{groupId}/view/{folderSlug}` 형태다.
 > 이미지 자체도 TripMate URL로 나간다 — **서버가 Drive에서 받아 전달하고,
 > Drive 파일 링크나 서명 URL을 브라우저에 노출하지 않는다.**
+
+**공유 단위는 폴더가 아니라 묶음(`share_links`)이다.**
+공유를 폴더 행에 붙여 두면 링크 하나가 폴더 하나밖에 못 가리키고,
+"최상위 + 고른 하위 폴더들"을 한 링크로 여는 게 구조적으로 불가능하다.
+경위는 `docs/decisions/2026-08-19-sharing-and-times.md`에 있다.
+
+- 한 모임에 **용도별로 여러 묶음**을 둔다 (부모님께 / 동반 모임). 폴더 하나가 여러 묶음에 동시에 들어갈 수 있다.
+- 묶음의 각 줄은 `{folderId, includeDescendants}`다.
+  `includeDescendants`면 그 아래 **모든 깊이**가 따라 나가고, **나중에 만든 하위 폴더도 자동으로 포함된다.**
+  모르고 새는 걸 막기 위해 화면은 어느 줄이 `이 폴더만`이고 어느 줄이 `하위 전부`인지 항상 보여 주고,
+  자동으로 들어온 폴더에는 배지를 붙인다.
+- **최상위 폴더도 담을 수 있다.** 대신 범위를 매번 명시적으로 고르게 하고 "하위 포함"을 기본값으로 두지 않는다.
+- **묶음에서 폴더를 빼면 그 폴더만 즉시 안 보이고 링크 주소는 그대로 산다.**
+  묶음을 중지하면 링크 전체가 죽는다.
+- 폴더의 "공유" 버튼은 입구로 남아 있다 — 누르면 그 폴더 하나짜리 묶음을 만들거나 연다.
+  **권한 규칙을 두 군데 두지 않는다.**
+
+> 뷰어 주소는 `tripmate.app/{groupId}/view/{token}`이고, 묶음 안에서 폴더를 열면 슬러그가 붙는다.
+> **토큰을 폴더 ID나 묶음 ID에서 파생시키지 말 것** — 중지했다 다시 공유했을 때
+> 예전에 뿌린 링크가 되살아나면 안 되므로 공유할 때마다 난수로 뽑는다.
 >
-> 폴더마다 **공개/비공개 토글**이 있고 기본값은 비공개다.
-> **비공개로 되돌리면 그 링크는 즉시 죽고, 다시 공개하면 새 토큰이 발급된다** —
-> 예전에 뿌린 링크가 되살아나면 안 되므로 **링크를 폴더 ID에서 파생시키지 말 것.**
+> **묶음에 없는 폴더는 뷰어의 목록에 나타나지도 않는다.** 존재를 알리지 않는다.
+> 멤버가 열면 `memberView`로 알려 주고 **배너 + "앱에서 열기"**를 띄운다 —
+> 정산 링크와 달리 자동으로 보내지 않는다. 방장이 외부인 시점을 확인하려고 여는 경우가 있다.
 
 ### 정산
 
@@ -145,11 +164,14 @@ TripMate는 이 넷을 **하나의 여행 모임 = 하나의 작업 공간**으�
 Group    { id, name, dest, start, end, memo, owner, cur, driveFolderId }
 Member   { id, name, color, kakaoId, left }        # left=true → 나갔지만 정산에는 남음
 Day      { n, date, dow, label }                   # 기간에서 자동 생성
-Item     { id, time, cat, title, meta, booked, thumb,
+Item     { id, time, endTime, cat, title, meta, booked, thumb,   # endTime<time 이면 익일
            split, cost, cur, rate, payer, shared,  # split=false면 뒤 전부 비어 있음
-           checkIn, checkOut }                     # cat==="stay" 전용
+           checkIn, checkOut,                      # cat==="stay" 전용 — 날짜
+           checkInTime, checkOutTime }             # cat==="stay" 전용 — 시각
 Shared   { members[], guests }                     # 이 항목을 누가 나눠 내는가
-Folder   { id, name, slug, parentId, driveFolderId, pub, token }
+Folder   { id, name, slug, parentId, driveFolderId }           # 공유는 여기 없다
+Share    { id, groupId, label, token, entries[] }              # 외부 공유 묶음
+Entry    { folderId, includeDescendants }                      # deep이면 아래 전부 + 이후 생긴 것도
 Photo    { driveFileId, name, folderId, uploadedAt, takenAt }   # takenAt은 없을 수 있음
 Doc      { id, title, blocks[], updatedAt }        # 모임 멤버 전용 — pub 없음
 Block    { id, kind, ...content }                  # timetable | map | stay | settle | memo
@@ -229,10 +251,19 @@ Transfer { from, to, amt, state }                  # state: null | "req" | "done
   모임 스위처는 **사이드바 하단**, 계정 칩 바로 위에 둔다.
 - 일차 이동은 **탭**으로 한다. 비어 있는 날은 탭에 점을 찍어 알린다.
 - 일차 헤더 아래에 **그날 묵는 숙소 칩**을 놓는다. 2개면 2개 다 보여 준다.
+  칩에 **`숙박 중 · 3박째`와 체크인/체크아웃 날짜·시각**을 함께 쓴다 —
+  여러 날에 걸친 숙소가 매일 똑같아 보이면 지금이 며칠째인지 알 수 없다.
+  **일정 카드는 체크인한 날에만 놓는다.** 매일 복제하면 같은 항목이 여러 번 있는 것처럼 보여
+  일정 개수와 금액 합계가 전부 어긋난다.
 - 타임라인은 시간 열 + 연결선 + 카드. 카드 높이는 선 정렬 때문에 고정한다.
+  시각은 `09:30 – 11:00`으로 쓰고, **종료가 시작보다 이르면 익일이므로 `+1일` 배지**를 붙인다.
 - 결제자 미지정은 노란 배지로 표시하고, 카드를 누르면 그 자리에서 지정할 수 있어야 한다.
 - 사진 화면은 앨범 목록이 아니라 **폴더 탐색기**다. 트리 + 브레드크럼 + 폴더 카드 + 그리드.
   정렬 셀렉트(업로드순/촬영순)를 툴바에 두고, 촬영 정보가 없어 대체된 항목은 배지로 알린다.
+  사진은 **여러 장 골라 다른 폴더로 옮길 수 있고**, 폴더 자체도 다른 폴더 밑으로 옮길 수 있다.
+- 공유는 **모달 하나**에서 끝낸다. 폴더 트리에 체크박스를 놓고
+  `전체 선택 / 전체 해제 / 현재 폴더만 / 이 폴더와 하위 전부`를 함께 둔다.
+  **몇 개 폴더의 사진 몇 장이 나가는지를 그 자리에서 계산해 보여 준다** — 고른 것과 나가는 것이 달라지면 안 된다.
 - 정산 화면은 장부 + 정산서 2단. 이체 한 줄마다 **내가 눌러야 하는 버튼만** 활성화한다.
 - 문서는 **일차에 묶이지 않는다.** 블록을 얹는 자유 문서이며 CRUD가 전부 필요하다.
   외부 공유 버튼을 두지 않는다.
@@ -242,7 +273,7 @@ Transfer { from, to, amt, state }                  # state: null | "req" | "done
 기획(이 문서) → 프로토타입 → **실제 서비스** 순서로 자랐다. 셋이 어긋나면 기획이 흔들린다.
 
 ```
-packages/core/                  ★ 정산 알고리즘 · 통화 · 일차 계산 (서버와 브라우저가 공유)
+packages/core/                  ★ 정산 알고리즘 · 통화 · 일차 · 시각 · 공유 범위 (서버와 브라우저가 공유)
 apps/api/                       Fastify 5 + Kysely + Postgres
 apps/web/                       React 19 + Vite + TanStack Query
 prototype/index.html            단일 파일 프로토타입 — 디자인과 상호작용의 시각적 정본
@@ -253,6 +284,7 @@ docs/API.md                     REST 계약
 docs/WORKFLOW.md                멀티에이전트 운용 규칙 (에이전트 4종, 파일 경계, 무엇을 실행해 증명하는가)
 docs/decisions/2026-08-17-ambiguity-resolution.md    모호성 21건에 대한 사용자 답변과 확정 규칙
 docs/decisions/2026-08-17-implementation-choices.md  구현 스택 판단과 아직 애매한 것들
+docs/decisions/2026-08-19-sharing-and-times.md       공유를 묶음으로 옮긴 이유와 종료 시각 (확정 규칙 2개 변경)
 docs/design/pencil/trip-mate-prototype.pen           Pencil 디자인 — A 일정 / B 모달 / C 로그인
 .claude/agents/                 api-module · web-screen · settlement-guard · share-auditor
 CLAUDE.md                       이 문서 — 기획 정본
