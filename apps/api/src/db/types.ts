@@ -121,6 +121,8 @@ export interface TransferStatesTable {
   from_id: string;
   to_id: string;
   state: "req" | "done";
+  /** 확인을 누른 시점의 이체액. 지금 금액과 다르면 그 확인은 무효다 (004) */
+  amt: number;
   updated_at: Created;
   updated_by: string | null;
 }
@@ -129,6 +131,8 @@ export interface GuestBackStatesTable {
   group_id: string;
   member_id: string;
   received: boolean;
+  /** 확인을 누른 시점의 기타 인원 몫. 지금 금액과 다르면 무효다 (004) */
+  amt: number;
   updated_at: Created;
   updated_by: string | null;
 }

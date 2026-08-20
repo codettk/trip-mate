@@ -97,19 +97,22 @@ export async function loadSettlement(groupId: string): Promise<SettleResult> {
 
   const tRows = await db
     .selectFrom("transfer_states")
-    .select(["from_id", "to_id", "state"])
+    .select(["from_id", "to_id", "state", "amt"])
     .where("group_id", "=", groupId)
     .execute();
+  // 금액을 함께 넘긴다. settle() 이 지금 이체액과 대조해 다르면 확인을 버린다.
   const transferStates = Object.fromEntries(
-    tRows.map((t) => [transferKey(t.from_id, t.to_id), t.state]),
+    tRows.map((t) => [transferKey(t.from_id, t.to_id), { state: t.state, amt: Number(t.amt) }]),
   );
 
   const gRows = await db
     .selectFrom("guest_back_states")
-    .select(["member_id", "received"])
+    .select(["member_id", "received", "amt"])
     .where("group_id", "=", groupId)
     .execute();
-  const guestBackStates = Object.fromEntries(gRows.map((g) => [g.member_id, g.received]));
+  const guestBackStates = Object.fromEntries(
+    gRows.filter((g) => g.received).map((g) => [g.member_id, Number(g.amt)]),
+  );
 
   const result = settle({ members: settleMembers, items, transferStates, guestBackStates });
 

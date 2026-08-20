@@ -184,11 +184,20 @@ export async function settlementRoutes(app: FastifyInstance): Promise<void> {
     } else {
       await db
         .insertInto("transfer_states")
-        .values({ group_id: gid, from_id: from, to_id: to, state: next, updated_by: user.id })
+        // 지금 화면에 떠 있는 금액을 함께 박아 둔다. 나중에 항목이 바뀌어 이체액이
+        // 달라지면 settle() 이 이 금액과 대조해 확인을 버리고, 마감이 자동으로 풀린다.
+        .values({
+          group_id: gid,
+          from_id: from,
+          to_id: to,
+          state: next,
+          amt: t.amt,
+          updated_by: user.id,
+        })
         .onConflict((oc) =>
           oc
             .columns(["group_id", "from_id", "to_id"])
-            .doUpdateSet({ state: next, updated_at: new Date(), updated_by: user.id }),
+            .doUpdateSet({ state: next, amt: t.amt, updated_at: new Date(), updated_by: user.id }),
         )
         .execute();
     }
@@ -215,16 +224,27 @@ export async function settlementRoutes(app: FastifyInstance): Promise<void> {
 
     if (received) {
       const before = await loadSettlement(gid);
-      if (!before.collectors.some((c) => c.id === mid)) {
+      const collector = before.collectors.find((c) => c.id === mid);
+      if (!collector) {
         throw conflict("받을 기타 인원 몫이 없습니다. 화면을 새로고침하세요");
       }
       await db
         .insertInto("guest_back_states")
-        .values({ group_id: gid, member_id: mid, received: true, updated_by: user.id })
+        // 이체와 같은 이유로 금액을 함께 저장한다 — 몫이 달라지면 확인이 무효가 된다.
+        .values({
+          group_id: gid,
+          member_id: mid,
+          received: true,
+          amt: collector.amt,
+          updated_by: user.id,
+        })
         .onConflict((oc) =>
-          oc
-            .columns(["group_id", "member_id"])
-            .doUpdateSet({ received: true, updated_at: new Date(), updated_by: user.id }),
+          oc.columns(["group_id", "member_id"]).doUpdateSet({
+            received: true,
+            amt: collector.amt,
+            updated_at: new Date(),
+            updated_by: user.id,
+          }),
         )
         .execute();
     } else {
