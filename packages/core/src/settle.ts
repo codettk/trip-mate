@@ -106,13 +106,16 @@ export function settle(input: SettleInput): SettleResult {
     const d = debt[di]!;
     const amt = Math.min(c.net, d.net);
     if (amt > 0) {
+      // 확인은 "그 금액을 주고받았다"는 뜻이다. 금액이 달라졌으면 다른 이체이므로
+      // 예전 확인을 그대로 물려주지 않는다 — 그래야 마감이 자동으로 풀린다.
+      const saved = transferStates[transferKey(d.id, c.id)];
       transfers.push({
         fromId: d.id,
         fromName: d.name,
         toId: c.id,
         toName: c.name,
         amt,
-        state: transferStates[transferKey(d.id, c.id)] ?? null,
+        state: saved && saved.amt === amt ? saved.state : null,
       });
     }
     c.net -= amt;
@@ -123,12 +126,11 @@ export function settle(input: SettleInput): SettleResult {
 
   const collectors: Collector[] = members
     .filter((m) => (guestBack[m.id] ?? 0) > 0)
-    .map((m) => ({
-      id: m.id,
-      name: m.name,
-      amt: guestBack[m.id] ?? 0,
-      received: guestBackStates[m.id] === true,
-    }));
+    .map((m) => {
+      const amt = guestBack[m.id] ?? 0;
+      // 이체와 같은 규칙 — 받은 금액이 달라졌으면 "받음 확인"도 무효다.
+      return { id: m.id, name: m.name, amt, received: guestBackStates[m.id] === amt };
+    });
 
   const closed =
     pending.length === 0 &&

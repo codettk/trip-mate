@@ -96,6 +96,16 @@ export interface Transfer {
   state: TransferState;
 }
 
+/**
+ * 이체 한 건에 대한 사람의 확인. 금액이 함께 붙는다.
+ * 저장된 `amt` 가 지금 계산된 이체액과 다르면 그 확인은 없던 것으로 친다.
+ */
+export interface TransferConfirm {
+  state: Exclude<TransferState, null>;
+  /** 확인을 누른 시점의 이체액 (원 단위 정수) */
+  amt: number;
+}
+
 /** 모임 밖 인원 몫을 직접 받아야 하는 결제자. */
 export interface Collector {
   id: string;
@@ -115,10 +125,17 @@ export interface SettleInput {
   /** 나간 멤버를 포함한 전원. 순서가 이체 짝짓기의 타이브레이커가 되므로 안정적으로 넘긴다. */
   members: SettleMember[];
   items: SettleItem[];
-  /** "보낸사람>받는사람" → 상태 */
-  transferStates?: Record<string, Exclude<TransferState, null>>;
-  /** 결제자 id → 기타 인원 몫 수령 확인 */
-  guestBackStates?: Record<string, boolean>;
+  /**
+   * "보낸사람>받는사람" → 확인 상태와 **그때의 금액**.
+   *
+   * ⚠ 금액을 함께 들고 있어야 한다. (보낸사람, 받는사람) 만으로 키를 잡으면
+   *   나중에 항목 금액을 고쳐 이체액이 달라져도 예전 "done" 이 그대로 붙어,
+   *   ₩5,000 을 주고받고 마감한 정산이 ₩15,000 으로 바뀐 뒤에도 마감으로 남는다.
+   *   확인은 "그 금액을 주고받았다"는 뜻이므로 금액이 바뀌면 무효다.
+   */
+  transferStates?: Record<string, TransferConfirm>;
+  /** 결제자 id → 수령 확인을 누른 시점의 기타 인원 몫. 지금 금액과 다르면 무효다. */
+  guestBackStates?: Record<string, number>;
 }
 
 export interface SettleResult {
