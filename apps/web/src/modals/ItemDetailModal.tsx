@@ -8,7 +8,15 @@
  * "수정 폼으로 가세요"로 미루지 않는다. (캐시 무효화는 useApiMutation 이 한다.)
  */
 
-import { dowOf, formatDuration, formatMoney, formatRange, formatWon, shortDate } from "@tripmate/core";
+import {
+  dowOf,
+  formatDuration,
+  formatMoney,
+  formatRange,
+  formatWon,
+  previewSplit,
+  shortDate,
+} from "@tripmate/core";
 import { useState } from "react";
 import { api } from "../api/client.ts";
 import { useApiMutation, useMembers } from "../api/hooks.ts";
@@ -69,8 +77,16 @@ export function ItemDetailModal({ open, gid, item, onClose }: ItemDetailModalPro
   const range = formatRange(item.time, item.endTime);
   const dur = item.duration === null ? "" : formatDuration(item.duration);
   const payer = members.find((m) => m.id === item.payerId) ?? null;
-  const parts = item.shared.members.length + item.shared.guests;
-  const per = parts ? Math.round(item.krw / parts) : 0;
+  // 1인 몫은 서버·지출 폼과 **같은 함수**로 구한다. 여기서 손으로 나누면
+  // previewSplit 의 반올림을 한 번만 손대도 상세 화면만 조용히 1원씩 어긋난다.
+  const split = previewSplit({
+    cost: item.cost,
+    rate: item.rate,
+    memberCount: item.shared.members.length,
+    guests: item.shared.guests,
+  });
+  const parts = split.parts;
+  const per = split.per;
   const assignable = members.filter((m) => !m.left);
 
   return (
