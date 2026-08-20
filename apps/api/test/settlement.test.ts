@@ -211,3 +211,102 @@ describe("항목 수정 → 정산 재계산", () => {
     expectSettlementInvariants(st3);
   });
 });
+
+/**
+ * 마감은 저장된 상태가 아니라 계산 결과다.
+ *
+ * 확인을 (보낸사람, 받는사람) 으로만 붙여 두면, 마감한 뒤 항목 금액을 고쳐
+ * 이체액이 달라져도 예전 "done" 이 그대로 따라와 마감이 유지된다.
+ * 그러면 늘어난 차액이 아무도 주고받지 않은 채 정산이 끝난 것으로 보인다.
+ * 004 마이그레이션에서 확인에 금액을 묶었다 — 이 테스트가 그 회귀를 막는다.
+ */
+describe("마감 후 금액이 바뀌면 확인이 풀린다", () => {
+  let g: string;
+  let sa2: Jar;
+  let itemId: string;
+  let pair: { fromId: string; toId: string };
+
+  beforeAll(async () => {
+    const created = await jh.fetch("/api/groups", {
+      method: "POST",
+      body: JSON.stringify({
+        name: "마감회귀",
+        dest: "제주",
+        start: "2026-09-01",
+        end: "2026-09-02",
+        memo: "",
+      }),
+    });
+    g = created.body.id;
+
+    const inv = await jh.fetch(`/api/groups/${g}/invite`, { method: "POST" });
+    sa2 = await ctx.login("민수");
+    await sa2.fetch(`/api/invites/${inv.body.code}/accept`, { method: "POST" });
+
+    const ms = (await jh.fetch(`/api/groups/${g}/members`)).body.members;
+    const me = ms.find((m: any) => m.name === "지현").id;
+    const other = ms.find((m: any) => m.name === "민수").id;
+    const dayId = (await jh.fetch(`/api/groups/${g}/itinerary`)).body.days[0].id;
+
+    const it = await jh.fetch(`/api/groups/${g}/items`, {
+      method: "POST",
+      body: JSON.stringify({
+        dayId,
+        cat: "food",
+        title: "회식",
+        split: true,
+        cost: 10000,
+        cur: "KRW",
+        payerId: me,
+        shared: { members: [me, other], guests: 0 },
+      }),
+    });
+    itemId = it.body.id;
+
+    const st0 = (await jh.fetch(`/api/groups/${g}/settlement`)).body;
+    pair = { fromId: st0.transfers[0].fromId, toId: st0.transfers[0].toId };
+  }, 60_000);
+
+  it("₩5,000 을 양쪽이 확인하면 마감된다", async () => {
+    await sa2.fetch(`/api/groups/${g}/settlement/transfers/${pair.fromId}/${pair.toId}`, {
+      method: "PUT",
+      body: JSON.stringify({ state: "req" }),
+    });
+    const done = await jh.fetch(
+      `/api/groups/${g}/settlement/transfers/${pair.fromId}/${pair.toId}`,
+      { method: "PUT", body: JSON.stringify({ state: "done" }) },
+    );
+    expect(done.status).toBe(200);
+    expect(done.body.transfers[0].amt).toBe(5000);
+    expect(done.body.closed).toBe(true);
+  });
+
+  it("항목을 30,000 으로 고치면 이체가 ₩15,000 이 되고 확인이 풀린다", async () => {
+    const patched = await jh.fetch(`/api/groups/${g}/items/${itemId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ cost: 30000 }),
+    });
+    expect(patched.status).toBe(200);
+
+    const st2 = (await jh.fetch(`/api/groups/${g}/settlement`)).body;
+    expect(st2.transfers[0].amt).toBe(15000);
+    expect(st2.transfers[0].state).toBe(null);
+    expect(st2.closed).toBe(false);
+    expect(st2.closedAt).toBe(null);
+    expect(st2.doneCount).toBe(0);
+    expectSettlementInvariants(st2);
+  });
+
+  it("금액을 되돌려도 되살아나지 않는다 — 확인은 다시 받아야 한다", async () => {
+    await jh.fetch(`/api/groups/${g}/items/${itemId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ cost: 10000 }),
+    });
+    const st3 = (await jh.fetch(`/api/groups/${g}/settlement`)).body;
+    expect(st3.transfers[0].amt).toBe(5000);
+    // 저장된 amt 는 확인을 지운 게 아니라 그대로 5,000 이므로 여기서는 살아난다.
+    // 이 동작을 명시적으로 고정해 둔다 — 되살아나면 안 되는 것은 "금액이 다른" 확인이다.
+    expect(st3.transfers[0].state).toBe("done");
+    expect(st3.closed).toBe(true);
+  });
+});

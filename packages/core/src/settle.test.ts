@@ -119,9 +119,12 @@ describe("settle — 마감", () => {
     expect(first.closed).toBe(false);
 
     const transferStates = Object.fromEntries(
-      first.transfers.map((t) => [transferKey(t.fromId, t.toId), "done" as const]),
+      first.transfers.map((t) => [
+        transferKey(t.fromId, t.toId),
+        { state: "done" as const, amt: t.amt },
+      ]),
     );
-    const guestBackStates = Object.fromEntries(first.collectors.map((c) => [c.id, true]));
+    const guestBackStates = Object.fromEntries(first.collectors.map((c) => [c.id, c.amt]));
 
     const half = settle({ members: MEMBERS, items: complete, transferStates });
     expect(half.closed).toBe(false); // 수령 확인이 남았다
@@ -137,10 +140,50 @@ describe("settle — 마감", () => {
     const r = settle({
       members: MEMBERS,
       items: complete,
-      transferStates: { [transferKey(t.fromId, t.toId)]: "req" },
+      transferStates: { [transferKey(t.fromId, t.toId)]: { state: "req", amt: t.amt } },
     });
     expect(r.transfers[0]!.state).toBe("req");
     expect(r.closed).toBe(false);
+  });
+
+  /**
+   * 확인은 "그 금액을 주고받았다"는 뜻이다. 금액이 달라지면 다른 이체이므로
+   * 예전 확인이 따라오면 안 된다 — 따라오면 마감이 풀리지 않고 차액이 사라진다.
+   */
+  it("이체액이 바뀌면 예전 확인이 무효가 되고 마감이 풀린다", () => {
+    const two = MEMBERS.slice(0, 2);
+    const items = [paid(10_000, "jh", ["jh", "ms"])];
+    const before = settle({ members: two, items });
+    const t = before.transfers[0]!;
+    expect(t.amt).toBe(5_000);
+
+    const states = { [transferKey(t.fromId, t.toId)]: { state: "done" as const, amt: t.amt } };
+    expect(settle({ members: two, items, transferStates: states }).closed).toBe(true);
+
+    // 같은 사람 쌍 그대로, 금액만 바뀐다 (10,000 → 30,000 → 이체 15,000)
+    const raised = [{ ...items[0]!, cost: 30_000 }];
+    const after = settle({ members: two, items: raised, transferStates: states });
+    expect(after.transfers[0]!.amt).toBe(15_000);
+    expect(after.transfers[0]!.state).toBeNull();
+    expect(after.closed).toBe(false);
+    expect(after.doneCount).toBe(0);
+  });
+
+  it("기타 인원 몫이 바뀌면 받음 확인도 무효가 된다", () => {
+    const one = MEMBERS.slice(0, 1);
+    const items = [paid(10_000, "jh", ["jh"], 1)];
+    const before = settle({ members: one, items });
+    const c = before.collectors[0]!;
+    expect(c.amt).toBe(5_000);
+
+    const gb = { [c.id]: c.amt };
+    expect(settle({ members: one, items, guestBackStates: gb }).closed).toBe(true);
+
+    const raised = [{ ...items[0]!, cost: 90_000 }];
+    const after = settle({ members: one, items: raised, guestBackStates: gb });
+    expect(after.collectors[0]!.amt).toBe(45_000);
+    expect(after.collectors[0]!.received).toBe(false);
+    expect(after.closed).toBe(false);
   });
 });
 
