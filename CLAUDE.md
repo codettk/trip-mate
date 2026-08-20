@@ -124,6 +124,9 @@ TripMate는 이 넷을 **하나의 여행 모임 = 하나의 작업 공간**으�
   `대기 → (보낸 사람) 송금 확인 요청 → (받는 사람) 정산 완료`
   기타 인원 몫도 **결제자가 "받음 확인"** 을 누른다.
   모든 건이 완료되면 그 모임의 정산이 **마감**된다. 버튼은 **로그인한 사람에게 해당하는 것만** 활성화한다.
+  **확인은 금액에 묶인다** — "그 금액을 주고받았다"는 뜻이므로, 나중에 항목을 고쳐 이체액이 달라지면
+  그 확인은 무효가 되고 마감이 저절로 풀린다. `(보낸사람, 받는사람)` 만으로 확인을 붙여 두면
+  차액이 아무도 주고받지 않은 채 마감으로 남는다 — `docs/decisions/2026-08-20-settle-confirm-amounts.md`.
 - **정산 내역 공유는 링크 하나**다: `tripmate.app/{groupId}/settle/{token}`
   멤버가 열면 앱의 정산 화면, 비로그인·모임 밖 사람이 열면 **읽기 전용 정산 뷰어**로 간다.
   뷰어에는 이름·금액·이체 목록만 나오고 사진·문서·일정으로 넘어갈 수 없다.
@@ -285,6 +288,7 @@ docs/WORKFLOW.md                멀티에이전트 운용 규칙 (에이전트 4
 docs/decisions/2026-08-17-ambiguity-resolution.md    모호성 21건에 대한 사용자 답변과 확정 규칙
 docs/decisions/2026-08-17-implementation-choices.md  구현 스택 판단과 아직 애매한 것들
 docs/decisions/2026-08-19-sharing-and-times.md       공유를 묶음으로 옮긴 이유와 종료 시각 (확정 규칙 2개 변경)
+docs/decisions/2026-08-20-settle-confirm-amounts.md  이체·수령 확인을 금액에 묶은 이유 (마감이 안 풀리던 결함)
 docs/design/pencil/trip-mate-prototype.pen           Pencil 디자인 — A 일정 / B 모달 / C 로그인
 .claude/agents/                 api-module · web-screen · settlement-guard · share-auditor
 CLAUDE.md                       이 문서 — 기획 정본
