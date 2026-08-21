@@ -52,12 +52,12 @@ export const ME: Me = {
 };
 
 export const members: Member[] = [
-  { id: M.jh, userId: "u-jh", name: "지현", colorBg: "#E3EAFB", colorFg: "#2F53E0", role: "owner", left: false, joinedAt: "2026-08-01T00:00:00.000Z" },
-  { id: M.ms, userId: "u-ms", name: "민수", colorBg: "#FBE4E8", colorFg: "#D8455C", role: "member", left: false, joinedAt: "2026-08-01T00:01:00.000Z" },
-  { id: M.sa, userId: "u-sa", name: "수아", colorBg: "#F1E8FB", colorFg: "#7A4FD0", role: "member", left: false, joinedAt: "2026-08-01T00:02:00.000Z" },
-  { id: M.yh, userId: "u-yh", name: "윤호", colorBg: "#DEF1EA", colorFg: "#12866A", role: "member", left: false, joinedAt: "2026-08-01T00:03:00.000Z" },
+  { id: M.jh, userId: "u-jh", name: "지현", colorBg: "#E3EAFB", colorFg: "#2F53E0", avatarUrl: null, role: "owner", left: false, joinedAt: "2026-08-01T00:00:00.000Z" },
+  { id: M.ms, userId: "u-ms", name: "민수", colorBg: "#FBE4E8", colorFg: "#D8455C", avatarUrl: null, role: "member", left: false, joinedAt: "2026-08-01T00:01:00.000Z" },
+  { id: M.sa, userId: "u-sa", name: "수아", colorBg: "#F1E8FB", colorFg: "#7A4FD0", avatarUrl: null, role: "member", left: false, joinedAt: "2026-08-01T00:02:00.000Z" },
+  { id: M.yh, userId: "u-yh", name: "윤호", colorBg: "#DEF1EA", colorFg: "#12866A", avatarUrl: null, role: "member", left: false, joinedAt: "2026-08-01T00:03:00.000Z" },
   // 나갔지만 정산에는 그대로 남는다
-  { id: M.gy, userId: "u-gy", name: "기영", colorBg: "#EEF1F5", colorFg: "#8A94A6", role: "member", left: true, joinedAt: "2026-08-01T00:04:00.000Z" },
+  { id: M.gy, userId: "u-gy", name: "기영", colorBg: "#EEF1F5", colorFg: "#8A94A6", avatarUrl: null, role: "member", left: true, joinedAt: "2026-08-01T00:04:00.000Z" },
 ];
 
 const DAY_META = [

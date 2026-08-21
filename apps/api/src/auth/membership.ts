@@ -54,11 +54,23 @@ export async function requireOwner(user: AuthUser, groupId: string): Promise<Mem
 
 /** 그 모임의 전원 (나간 멤버 포함). 정산 계산에 그대로 쓴다. */
 export async function allMembers(groupId: string) {
+  // 프로필 사진은 users 에만 있다. 멤버 표시에 쓰려면 여기서 같이 가져와야 한다.
   return db
     .selectFrom("members")
-    .select(["id", "user_id", "name", "color_bg", "color_fg", "role", "left_at", "joined_at"])
-    .where("group_id", "=", groupId)
-    .orderBy("joined_at", "asc")
-    .orderBy("id", "asc")
+    .innerJoin("users", "users.id", "members.user_id")
+    .select([
+      "members.id as id",
+      "members.user_id as user_id",
+      "members.name as name",
+      "members.color_bg as color_bg",
+      "members.color_fg as color_fg",
+      "members.role as role",
+      "members.left_at as left_at",
+      "members.joined_at as joined_at",
+      "users.avatar_url as avatar_url",
+    ])
+    .where("members.group_id", "=", groupId)
+    .orderBy("members.joined_at", "asc")
+    .orderBy("members.id", "asc")
     .execute();
 }

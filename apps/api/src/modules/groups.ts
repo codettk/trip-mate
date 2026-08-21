@@ -92,6 +92,9 @@ function serializeMember(m: MemberRow) {
     name: m.name,
     colorBg: m.color_bg,
     colorFg: m.color_fg,
+    // 카카오 프로필 사진. 없으면 화면이 이름 첫 글자로 떨어진다.
+    // 멤버 전용 라우트에서만 나간다 — 뷰어·정산 공유에는 이 함수가 쓰이지 않는다.
+    avatarUrl: m.avatar_url,
     role: m.role,
     left: m.left_at !== null, // 나갔지만 정산에는 그대로 남아 있다
     joinedAt: m.joined_at,

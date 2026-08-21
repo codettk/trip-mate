@@ -118,6 +118,7 @@ export function Shell({ groupId }: { groupId: string }) {
 
   const { group, members, me } = g.data;
   const active = members.filter((m) => !m.left); // 나간 멤버는 스택에서 뺀다
+  const myMember = members.find((m) => m.id === me.memberId) ?? null;
   const cur = currencyOf(group.cur);
 
   const itemCount = itinerary.data?.days.reduce((s, d) => s + d.items.length, 0);
@@ -182,12 +183,21 @@ export function Shell({ groupId }: { groupId: string }) {
           style={{ width: "100%", textAlign: "left" }}
           onClick={() => setLogout(true)}
         >
-          {/* 카카오 노랑은 로그인 버튼과 계정 표시에만 쓴다 */}
-          <span className="kk">K</span>
+          {/* 카카오 노랑은 로그인 버튼과 계정 표시에만 쓴다.
+              프로필 사진이 있으면 사진을 쓰되 노란 테두리를 남겨 카카오 계정임을 유지한다. */}
+          {myMember?.avatarUrl ? (
+            <img
+              className="kk"
+              src={myMember.avatarUrl}
+              alt=""
+              referrerPolicy="no-referrer"
+              style={{ objectFit: "cover", border: "2px solid #FEE500", background: "none" }}
+            />
+          ) : (
+            <span className="kk">K</span>
+          )}
           <span>
-            <span className="who-name">
-              {members.find((m) => m.id === me.memberId)?.name ?? "내 계정"}
-            </span>
+            <span className="who-name">{myMember?.name ?? "내 계정"}</span>
             <small>카카오 계정 연결됨 · {me.role === "owner" ? "방장" : "멤버"}</small>
           </span>
         </button>

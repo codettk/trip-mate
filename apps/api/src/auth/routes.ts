@@ -36,7 +36,17 @@ export function colorFor(seed: string): { bg: string; fg: string } {
   return AVATAR_COLORS[h % AVATAR_COLORS.length]!;
 }
 
-async function upsertUser(kakaoId: string, name: string, avatarUrl: string | null) {
+/**
+ * 카카오는 프로필 사진을 `http://` 로 준다. 그대로 두면 HTTPS 로 서비스할 때
+ * 브라우저가 혼합 콘텐츠로 막아 사진이 통째로 안 나온다. 저장할 때 한 번만 올려 둔다.
+ * (k.kakaocdn.net 은 https 로도 같은 이미지를 준다 — 확인함)
+ */
+function httpsOnly(url: string | null): string | null {
+  return url && url.startsWith("http://") ? "https://" + url.slice("http://".length) : url;
+}
+
+async function upsertUser(kakaoId: string, name: string, rawAvatarUrl: string | null) {
+  const avatarUrl = httpsOnly(rawAvatarUrl);
   const existing = await db
     .selectFrom("users")
     .selectAll()

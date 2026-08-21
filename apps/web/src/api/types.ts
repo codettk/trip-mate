@@ -42,6 +42,8 @@ export interface Member {
   name: string;
   colorBg: string;
   colorFg: string;
+  /** 카카오 프로필 사진. null 이면 이름 첫 글자로 떨어진다 */
+  avatarUrl: string | null;
   role: "owner" | "member";
   /** 나갔지만 정산에는 그대로 남는다. 화면에는 "기타"로 표시한다 */
   left: boolean;

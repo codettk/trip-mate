@@ -8,7 +8,7 @@
  */
 
 import { formatMoney, formatWon } from "@tripmate/core";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Icon } from "./Icon.tsx";
 import type { Member } from "../api/types.ts";
 
@@ -28,7 +28,25 @@ export function Fx({ cost, cur, krw }: { cost: number; cur: string; krw: number 
 }
 
 /** 멤버 아바타. 나간 멤버는 점선 테두리 + 회색으로 "기타"임을 드러낸다. */
-export function Avatar({ m, size }: { m: Pick<Member, "name" | "colorBg" | "colorFg" | "left">; size?: number }) {
+/**
+ * 프로필 사진이 있으면 사진을, 없으면 이름 첫 글자를 그린다.
+ *
+ * 색 타일은 사진이 있을 때도 배경으로 남긴다 — 이미지가 늦게 뜨거나 실패해도
+ * 동그라미 크기가 흔들리지 않고, 사람마다 색으로 구분되던 것이 유지된다.
+ * `avatarUrl` 은 선택 필드다. 아직 안 내려주는 화면(뷰어 등)은 그대로 첫 글자로 돈다.
+ */
+export function Avatar({
+  m,
+  size,
+}: {
+  m: Pick<Member, "name" | "colorBg" | "colorFg" | "left"> & { avatarUrl?: string | null };
+  size?: number;
+}) {
+  // 사진 주소가 죽어 있을 수 있다 (카카오가 이미지를 갈아 끼우거나 지운 경우).
+  // 깨진 이미지 아이콘 대신 조용히 첫 글자로 돌아간다.
+  const [broken, setBroken] = useState(false);
+  const src = broken ? null : (m.avatarUrl ?? null);
+
   return (
     <span
       className={"who" + (m.left ? " left" : "")}
@@ -40,7 +58,18 @@ export function Avatar({ m, size }: { m: Pick<Member, "name" | "colorBg" | "colo
       }}
       title={m.left ? `${m.name} (나감)` : m.name}
     >
-      {m.name[0]}
+      {src ? (
+        <img
+          src={src}
+          alt=""
+          loading="lazy"
+          referrerPolicy="no-referrer"
+          onError={() => setBroken(true)}
+          style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover", display: "block" }}
+        />
+      ) : (
+        m.name[0]
+      )}
     </span>
   );
 }
