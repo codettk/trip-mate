@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>개인정보처리방침 — TripMate</title>
+<meta name="description" content="TripMate 가 어떤 정보를 받아 어디에 보관하고 언제 지우는지." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="/">TripMate</a>
+  <nav><a href="/">홈</a></nav>
+</header>
+
+<main class="doc">
+  <h1>개인정보처리방침</h1>
+  <p class="lede">TripMate 가 어떤 정보를 받아, 어디에 두고, 언제 지우는지 적었습니다.</p>
+  <p class="meta">시행일 2026년 8월 22일</p>
+
+  <h2>1. 받는 정보</h2>
+  <table>
+    <thead><tr><th>무엇</th><th>어떻게</th><th>왜</th></tr></thead>
+    <tbody>
+      <tr><td>카카오 회원번호, 닉네임, 프로필 이미지 주소</td><td>카카오 로그인 시 카카오가 전달</td><td>계정 식별과 멤버 표시</td></tr>
+      <tr><td>여행 모임 정보 (제목·여행지·기간·메모)</td><td>이용자가 직접 입력</td><td>일정표 생성</td></tr>
+      <tr><td>일정과 지출 (시각·분류·금액·통화·결제자·정산 대상)</td><td>이용자가 직접 입력</td><td>일정 표시와 정산 계산</td></tr>
+      <tr><td>사진·동영상과 그 촬영 시각</td><td>이용자가 직접 업로드</td><td>모임 앨범 보관과 정렬</td></tr>
+      <tr><td>문서 내용</td><td>이용자가 직접 입력</td><td>모임 내부 공유</td></tr>
+      <tr><td>세션 쿠키 (<code>tm_session</code>)</td><td>로그인 시 발급</td><td>로그인 상태 유지</td></tr>
+    </tbody>
+  </table>
+  <p>
+    <b>카카오에서 받는 것은 회원번호·닉네임·프로필 이미지 주소뿐입니다.</b>
+    이메일, 전화번호, 생일, 성별, 연령대, 친구 목록은 요청하지도 받지도 않습니다.
+  </p>
+  <p>결제 정보와 계좌번호를 받지 않습니다. 정산은 “누가 누구에게 얼마”를 계산해 보여줄 뿐, 실제 송금을 하지 않습니다.</p>
+
+  <h2>2. 어디에 보관하나</h2>
+  <ul>
+    <li><b>사진·동영상</b> — 운영자 명의의 Google Drive. 멤버 개인 Drive 를 쓰지 않습니다.</li>
+    <li><b>그 밖의 정보</b> — 서비스 데이터베이스. 사진 자체는 넣지 않고 Drive 의 파일 식별자만 둡니다.</li>
+  </ul>
+  <p>
+    <b>Drive 공유 링크를 밖으로 내보내지 않습니다.</b> 이미지는 항상 TripMate 주소로 나가고,
+    서버가 Drive 에서 받아 전달합니다. 이용자의 브라우저에 Drive 파일 링크나 서명 URL 이 노출되지 않습니다.
+  </p>
+
+  <h2>3. 누구에게 보이나</h2>
+  <ul>
+    <li><b>같은 모임의 멤버</b> — 그 모임의 일정·사진·정산·문서를 봅니다. 다른 모임은 보지 못합니다.</li>
+    <li><b>공유 링크를 받은 모임 밖 사람</b> — 링크에 담긴 폴더의 <b>사진과 동영상만</b> 봅니다.
+      묶음 밖으로 이동할 수 없고, 업로드·삭제도 할 수 없습니다. <b>문서는 외부 공유 대상이 아닙니다.</b></li>
+    <li><b>정산 공유 링크</b> — 이름·금액·이체 목록만 보이는 읽기 전용 화면입니다.
+      여기서 사진·문서·일정으로 넘어갈 수 없습니다.</li>
+  </ul>
+  <p>공유 링크는 발급할 때마다 새로 뽑은 난수 토큰입니다. 공유를 중지하면 그 링크는 즉시 죽고, 다시 공유해도 예전 링크는 되살아나지 않습니다.</p>
+
+  <h2>4. 제3자 제공과 처리 위탁</h2>
+  <p>수집한 정보를 팔거나 광고 목적으로 넘기지 않습니다. 서비스 운영에 필요한 범위에서 아래를 이용합니다.</p>
+  <table>
+    <thead><tr><th>받는 곳</th><th>무엇을</th><th>왜</th></tr></thead>
+    <tbody>
+      <tr><td>주식회사 카카오</td><td>로그인 인증</td><td>카카오 계정으로 로그인</td></tr>
+      <tr><td>Google LLC (Google Drive)</td><td>사진·동영상 파일</td><td>파일 보관</td></tr>
+    </tbody>
+  </table>
+
+  <h2>5. 얼마나 두나</h2>
+  <ul>
+    <li><b>세션 쿠키</b> — 발급 후 30일. 로그아웃하면 즉시 삭제합니다.</li>
+    <li><b>초대 링크</b> — 발급 후 30분. 지나면 그 링크는 무효가 됩니다.</li>
+    <li><b>모임 데이터</b> — 모임이 남아 있는 동안. 모임을 삭제하면 함께 지웁니다.</li>
+    <li><b>탈퇴한 멤버</b> — 이미 낸 돈과 낼 돈이 있으므로 <b>정산 기록에는 남습니다.</b>
+      화면에는 이름 대신 “기타”로 표시하고, 새 지출의 대상이나 멤버 목록에는 나오지 않습니다.</li>
+  </ul>
+
+  <h2>6. 이용자가 할 수 있는 것</h2>
+  <ul>
+    <li>본인이 올린 사진과 만든 문서를 언제든 삭제할 수 있습니다.</li>
+    <li>모임에서 나갈 수 있습니다. 나가기 전에 남은 정산 금액을 먼저 알려 드립니다.</li>
+    <li>계정 삭제와 보관 중인 정보 열람·정정은 아래 연락처로 요청하실 수 있습니다.</li>
+  </ul>
+
+  <h2>7. 안전 조치</h2>
+  <ul>
+    <li>모든 통신은 HTTPS 로 암호화합니다.</li>
+    <li>Drive 접근에 필요한 인증 정보는 <b>서버 환경변수로만</b> 두고 브라우저로 내려보내지 않습니다.
+      업로드·다운로드·폴더 조작은 전부 서버를 거칩니다.</li>
+    <li>Drive 접근 권한은 <b>이 앱이 만든 파일로 한정</b>됩니다 (<code>drive.file</code>).
+      운영자 Drive 의 다른 파일에는 접근하지 않습니다.</li>
+    <li>세션 쿠키는 <code>httpOnly</code> 라 자바스크립트가 읽지 못합니다.</li>
+  </ul>
+
+  <h2>8. 만 14세 미만</h2>
+  <p>만 14세 미만 아동을 대상으로 하지 않으며, 해당 정보를 알고서 수집하지 않습니다.</p>
+
+  <h2>9. 방침이 바뀌면</h2>
+  <p>내용이 바뀌면 이 페이지에 바뀐 내용과 시행일을 올립니다.</p>
+
+  <h2>10. 연락처</h2>
+  <p>개인정보 보호책임자: <a href="mailto:gemiso444@gmail.com">gemiso444@gmail.com</a></p>
+</main>
+
+<footer>
+  <span>TripMate</span>
+  <a href="/">홈</a>
+  <a href="mailto:gemiso444@gmail.com">gemiso444@gmail.com</a>
+</footer>
+</body>
+</html>
