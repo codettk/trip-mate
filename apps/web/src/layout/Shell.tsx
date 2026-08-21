@@ -186,13 +186,9 @@ export function Shell({ groupId }: { groupId: string }) {
           {/* 카카오 노랑은 로그인 버튼과 계정 표시에만 쓴다.
               프로필 사진이 있으면 사진을 쓰되 노란 테두리를 남겨 카카오 계정임을 유지한다. */}
           {myMember?.avatarUrl ? (
-            <img
-              className="kk"
-              src={myMember.avatarUrl}
-              alt=""
-              referrerPolicy="no-referrer"
-              style={{ objectFit: "cover", border: "2px solid #FEE500", background: "none" }}
-            />
+            <span className="kk photo">
+              <img src={myMember.avatarUrl} alt="" referrerPolicy="no-referrer" />
+            </span>
           ) : (
             <span className="kk">K</span>
           )}

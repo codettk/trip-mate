@@ -58,6 +58,7 @@ export function Avatar({
       }}
       title={m.left ? `${m.name} (나감)` : m.name}
     >
+      {/* 크기·자르기·원형은 전부 app.css 의 `.who>img` 가 낸다 — 칸마다 크기가 달라도 안 눌린다 */}
       {src ? (
         <img
           src={src}
@@ -65,7 +66,6 @@ export function Avatar({
           loading="lazy"
           referrerPolicy="no-referrer"
           onError={() => setBroken(true)}
-          style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover", display: "block" }}
         />
       ) : (
         m.name[0]

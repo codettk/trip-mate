@@ -39,7 +39,9 @@ const server = http.createServer(async (req, res) => {
   const q = new URL(req.url, REDIRECT).searchParams;
   const code = q.get("code");
   const err = q.get("error");
-  res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+  // connection: close 가 없으면 브라우저가 keep-alive 로 붙잡고 있어
+  // server.close() 가 끝나지 않는다 — 스크립트가 안 끝난 것처럼 보인다.
+  res.writeHead(200, { "content-type": "text/html; charset=utf-8", connection: "close" });
   if (!code) { res.end(`<h3>실패: ${err ?? "code 없음"}</h3>`); return; }
   res.end("<h3>완료되었습니다. 이 창을 닫고 터미널로 돌아가세요.</h3>");
 
@@ -54,7 +56,11 @@ const server = http.createServer(async (req, res) => {
   const t = await r.json();
   if (!t.refresh_token) {
     console.log("리프레시 토큰이 오지 않았습니다:", JSON.stringify(t).slice(0, 300));
-    process.exit(1);
+    clearTimeout(expiry);
+    server.closeAllConnections();
+    server.close();
+    process.exitCode = 1;
+    return;
   }
   const tokPath = "config/token.json";
   const prev = JSON.parse(fs.readFileSync(tokPath, "utf8"));
@@ -77,8 +83,16 @@ const server = http.createServer(async (req, res) => {
     console.log(".env 를 못 고쳤습니다 — GOOGLE_REFRESH_TOKEN 을 직접 넣어 주세요.");
   }
 
+  // process.exit() 로 바로 끊으면 브라우저로 보낸 응답이 아직 나가는 중이라
+  // libuv 가 종료 중인 핸들을 건드리며 "Assertion failed ... UV_HANDLE_CLOSING" 을 뱉는다.
+  // 서버를 닫고 타이머를 풀어 이벤트 루프가 스스로 비게 둔다.
+  clearTimeout(expiry);
+  server.closeAllConnections();
   server.close();
-  process.exit(0);
 });
 server.listen(PORT);
-setTimeout(() => { console.log("시간 초과"); process.exit(1); }, 30 * 60 * 1000);
+const expiry = setTimeout(() => {
+  console.log("시간 초과");
+  server.close();
+  process.exitCode = 1;
+}, 30 * 60 * 1000);
