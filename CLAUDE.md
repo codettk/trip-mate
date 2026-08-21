@@ -289,6 +289,7 @@ docs/decisions/2026-08-17-ambiguity-resolution.md    모호성 21건에 대한 �
 docs/decisions/2026-08-17-implementation-choices.md  구현 스택 판단과 아직 애매한 것들
 docs/decisions/2026-08-19-sharing-and-times.md       공유를 묶음으로 옮긴 이유와 종료 시각 (확정 규칙 2개 변경)
 docs/decisions/2026-08-20-settle-confirm-amounts.md  이체·수령 확인을 금액에 묶은 이유 (마감이 안 풀리던 결함)
+docs/decisions/2026-08-22-kakao-and-drive-live.md    카카오·Drive 실연동 결과와 남은 구멍 셋 (프로젝트 분리 · 게시 URL · 드라이버 전환)
 docs/design/pencil/trip-mate-prototype.pen           Pencil 디자인 — A 일정 / B 모달 / C 로그인
 .claude/agents/                 api-module · web-screen · settlement-guard · share-auditor
 CLAUDE.md                       이 문서 — 기획 정본
