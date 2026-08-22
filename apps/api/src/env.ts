@@ -54,6 +54,10 @@ const schema = z.object({
   GOOGLE_DRIVE_ROOT_FOLDER_ID: z.string().default(""),
 
   MAX_UPLOAD_MB: z.coerce.number().int().positive().default(200),
+
+  // 웹 번들이 있는 디렉터리. 채우면 API 가 정적 파일까지 직접 서빙한다 —
+  // 서비스 하나로 배포할 때 쓴다. 비우면 API 만 돌고 웹은 따로 띄운다(개발 기본값).
+  WEB_DIST: z.string().default(""),
 });
 
 const parsed = schema.safeParse(process.env);

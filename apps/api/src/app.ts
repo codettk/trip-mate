@@ -1,6 +1,9 @@
+import { existsSync } from "node:fs";
+import { join, resolve, sep } from "node:path";
 import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
+import fastifyStatic from "@fastify/static";
 import Fastify, { type FastifyInstance } from "fastify";
 import { ZodError } from "zod";
 import { authRoutes } from "./auth/routes.ts";
@@ -85,9 +88,33 @@ export async function buildApp(): Promise<FastifyInstance> {
     });
   });
 
-  app.setNotFoundHandler((_req, reply) =>
-    reply.status(404).send({ error: { message: "없는 경로입니다", code: "not_found" } }),
-  );
+  // 웹 번들을 같이 서빙할지. 무료 호스팅은 안 쓰면 잠들기 때문에, 웹과 API 를
+  // 따로 두면 웹만 깨어나고 API 는 자고 있어 첫 요청이 엇갈린다. 하나로 합치면
+  // 깨는 것도 한 번이고 주소도 하나다. 비워 두면 예전처럼 API 만 돈다.
+  const webDist = env.WEB_DIST ? resolve(process.cwd(), env.WEB_DIST) : null;
+  const serveWeb = webDist !== null && existsSync(join(webDist, "index.html"));
+
+  if (serveWeb) {
+    await app.register(fastifyStatic, {
+      root: webDist,
+      // 해시가 붙은 자산만 오래 캐시한다. index.html 은 절대 캐시하면 안 된다 —
+      // 새로 배포해도 옛 번들을 계속 보게 된다.
+      setHeaders(reply, filePath) {
+        const cacheForever = filePath.includes(`${sep}assets${sep}`);
+        reply.header("Cache-Control", cacheForever ? "public, max-age=31536000, immutable" : "no-cache");
+      },
+    });
+  }
+
+  app.setNotFoundHandler((req, reply) => {
+    // API 경로는 언제나 JSON 404 다. SPA 를 돌려주면 없는 엔드포인트를 부른 쪽이
+    // HTML 을 받고 파싱에서 터져 원인을 엉뚱한 데서 찾게 된다.
+    if (!serveWeb || req.url.startsWith("/api/")) {
+      return reply.status(404).send({ error: { message: "없는 경로입니다", code: "not_found" } });
+    }
+    // 나머지는 SPA — 뷰어 주소(/{groupId}/view/{token})가 직접 열려야 한다.
+    return reply.sendFile("index.html");
+  });
 
   app.get("/api/health", async () => {
     const s = await storage();

@@ -1,9 +1,9 @@
 # TripMate 로컬 환경
 #
 #   docker compose up -d db                      DB만 (기본 개발 방식 — api/web은 호스트에서 npm run dev)
-#   docker compose --profile full up -d --build  전체 스택 (사용자 최종 테스트용)
+#   docker compose --profile full up -d --build  배포와 **같은 단일 이미지** (최종 테스트용)
 #
-# db 는 프로파일이 없어서 항상 뜬다. api/web 은 `full` 프로파일에서만 뜬다.
+# db 는 프로파일이 없어서 항상 뜬다. app 은 `full` 프로파일에서만 뜬다.
 
 services:
   db:
@@ -47,20 +47,21 @@ services:
       timeout: 3s
       retries: 20
 
-  api:
+  # 배포되는 것과 **같은 이미지**다. API 가 웹 번들까지 서빙한다.
+  # 두 벌로 두면 한쪽에서만 나는 버그가 생기므로 나누지 않는다.
+  app:
     profiles: ["full"]
     build:
       context: .
-      dockerfile: apps/api/Dockerfile
-    container_name: tripmate-api
+      dockerfile: Dockerfile
+    container_name: tripmate-app
     restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
     environment:
-      # .env 의 NODE_ENV 를 따른다. 기본은 production 이다.
-      # 목 로그인(AUTH_MODE=mock)으로 전체 스택을 테스트하려면 .env 에 NODE_ENV=development 를 둔다 —
-      # env.ts 가 운영 모드에서 목 로그인을 거부하기 때문이고, 그 가드는 그대로 둔다.
+      # env.ts 가 운영 모드에서 목 로그인을 거부한다. 목으로 전체 스택을 보려면
+      # .env 에 NODE_ENV=development 를 둔다 — 그 가드는 그대로 둔다.
       NODE_ENV: ${NODE_ENV:-production}
       API_PORT: 4000
       DATABASE_URL: postgresql://${POSTGRES_USER:-tripmate}:${POSTGRES_PASSWORD:-tripmate}@db:5432/${POSTGRES_DB:-tripmate}
@@ -69,7 +70,7 @@ services:
       AUTH_MODE: ${AUTH_MODE:-kakao}
       KAKAO_REST_API_KEY: ${KAKAO_REST_API_KEY:-}
       KAKAO_CLIENT_SECRET: ${KAKAO_CLIENT_SECRET:-}
-      KAKAO_REDIRECT_URI: ${KAKAO_REDIRECT_URI:-http://localhost:4000/api/auth/kakao/callback}
+      KAKAO_REDIRECT_URI: ${KAKAO_REDIRECT_URI:-http://localhost:8080/api/auth/kakao/callback}
       STORAGE_DRIVER: ${STORAGE_DRIVER:-local}
       LOCAL_STORAGE_DIR: /app/.data/storage
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
@@ -78,7 +79,7 @@ services:
       GOOGLE_DRIVE_ROOT_FOLDER_ID: ${GOOGLE_DRIVE_ROOT_FOLDER_ID:-}
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-200}
     ports:
-      - "${API_PORT:-4000}:4000"
+      - "${WEB_PUBLIC_PORT:-8080}:4000"
     volumes:
       - tripmate-storage:/app/.data/storage
     healthcheck:
@@ -87,20 +88,6 @@ services:
       timeout: 5s
       retries: 12
       start_period: 20s
-
-  web:
-    profiles: ["full"]
-    build:
-      context: .
-      dockerfile: apps/web/Dockerfile
-      args:
-        VITE_API_BASE: ${VITE_API_BASE:-}
-    container_name: tripmate-web
-    restart: unless-stopped
-    depends_on:
-      - api
-    ports:
-      - "${WEB_PUBLIC_PORT:-8080}:80"
 
 volumes:
   tripmate-pgdata:
