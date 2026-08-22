@@ -201,8 +201,14 @@ export function Shell({ groupId }: { groupId: string }) {
 
       <div className="main">
         <header className="apphead">
+          {/* 제목이 곧 모임 스위처다. 사이드바의 "모임 바꾸기"와 **같은 모달**을 연다 —
+              모바일에서는 사이드바가 가로 줄로 접히면서 그 카드가 숨겨지기 때문에
+              여기가 없으면 다른 모임으로 갈 방법이 아예 없다. */}
           <div>
-            <h1>{group.name}</h1>
+            <button className="gswitch" onClick={() => setSwitcher(true)}>
+              <h1>{group.name}</h1>
+              <Icon name="updown" />
+            </button>
             <div className="dates">{periodOf(group.start, group.end)}</div>
           </div>
           <div className="end">

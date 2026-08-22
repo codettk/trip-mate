@@ -6,6 +6,8 @@
  * 라우팅(랜딩 → 마지막 모임 / 로그인 / 온보딩)도 여기서 함께 본다.
  */
 
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import * as F from "./fixtures.ts";
@@ -90,6 +92,55 @@ describe("셸", () => {
     expect(within(dialog).getByText("여행 모임")).toBeTruthy();
     expect(within(dialog).getByText("현재")).toBeTruthy();
     expect(within(dialog).getByText("새 여행 모임")).toBeTruthy();
+  });
+
+  // 모바일에서는 사이드바가 가로 줄로 접히면서 모임 카드(.tripcard)가 숨겨진다.
+  // 헤더 제목이 같은 모달을 열지 않으면 다른 모임으로 갈 방법이 아예 없어진다.
+  // 실제로 그 상태로 배포돼서 모바일 사용자가 모임을 못 바꿨다.
+  it("헤더의 모임 제목을 눌러도 같은 스위처가 열린다 (모바일에는 이 입구뿐이다)", async () => {
+    const { container } = renderApp(`/g/${F.GID}`);
+    await screen.findByRole("heading", { name: F.GROUP_NAME });
+
+    const head = container.querySelector("header.apphead")!;
+    const title = head.querySelector("button.gswitch");
+    expect(title, "헤더 제목이 스위처 버튼이어야 한다").toBeTruthy();
+    expect(title!.textContent).toContain(F.GROUP_NAME);
+
+    fireEvent.click(title!);
+    const dialog = await screen.findByRole("dialog");
+    // 사이드바 버튼과 **같은 모달**이다. 규칙을 두 군데 두지 않는다.
+    expect(within(dialog).getByText("여행 모임")).toBeTruthy();
+    expect(within(dialog).getByText("현재")).toBeTruthy();
+  });
+
+  // 계정 칩은 로그아웃 입구다. 모바일에서 display:none 이면 로그아웃이 불가능해진다.
+  // 테스트 환경에는 CSS 가 안 실리므로 파일을 직접 읽어 본다.
+  it("모바일 스타일이 계정 칩을 숨기지 않는다 — 로그아웃 입구다", async () => {
+    const { container } = renderApp(`/g/${F.GID}`);
+    await screen.findByRole("heading", { name: F.GROUP_NAME });
+    expect(container.querySelector("aside.sidebar button.acct"), "계정 칩이 있어야 한다").toBeTruthy();
+
+    // import.meta.url 은 vitest 에서 file: 스킴이 아니라 못 읽는다. cwd(apps/web) 기준으로 연다.
+    const css = readFileSync(resolve(process.cwd(), "src/styles/app.css"), "utf8");
+    const mobile = css.slice(css.indexOf("@media (max-width:900px)"));
+    const block = mobile.slice(0, mobile.indexOf("\n}"));
+    expect(block.length, "모바일 블록을 못 찾았다").toBeGreaterThan(0);
+
+    // 선택자를 **정확히** 비교한다. `.acct>span{display:none}` 처럼 자식만 접는 규칙은
+    // 입구를 막지 않으므로 통과시켜야 한다.
+    const hiddenSelectors = new Set<string>();
+    for (const rule of block.split("}")) {
+      const i = rule.indexOf("{");
+      if (i < 0 || !/display:\s*none/.test(rule.slice(i))) continue;
+      for (const sel of rule.slice(0, i).split(",")) hiddenSelectors.add(sel.trim());
+    }
+
+    for (const [sel, why] of [
+      [".acct", "로그아웃"],
+      [".navitem", "화면 이동"],
+    ] as const) {
+      expect(hiddenSelectors.has(sel), `${sel} 를 모바일에서 숨기면 ${why} 가 막힌다`).toBe(false);
+    }
   });
 
   it("멤버 초대도 모달이고 30분 만료를 먼저 읽힌다", async () => {
