@@ -16,8 +16,19 @@ server {
   }
 
   # API 와 미디어는 같은 오리진처럼 보이게 넘긴다 — 세션 쿠키가 그대로 붙는다.
+  # 넘길 곳은 환경마다 다르다. compose 는 api:4000, Fly 는 <앱>.internal:4000 이다.
+  # nginx 이미지가 부팅할 때 /etc/nginx/templates 를 envsubst 로 치환한다.
+  # $uri $host 같은 nginx 변수는 환경변수가 아니라 그대로 남는다.
   location /api/ {
-    proxy_pass http://api:4000;
+    # ⚠ proxy_pass 에 호스트를 그대로 쓰면 nginx 가 **부팅할 때** DNS 를 풀고,
+    #   못 풀면 아예 뜨지 않는다 ("host not found in upstream").
+    #   두 앱을 같이 배포하면 API 가 아직 사설망에 안 올라와 웹이 통째로 죽는다.
+    #   변수로 넘기면 **요청할 때** 푼다 — API 가 늦게 떠도 웹은 살아 있고,
+    #   재배포로 주소가 바뀌어도 valid=10s 안에 따라간다.
+    #   변수를 쓰면 경로가 안 붙으므로 $request_uri 를 직접 이어 준다.
+    resolver ${NGINX_LOCAL_RESOLVERS} valid=10s;
+    set $tm_api "http://${API_UPSTREAM}";
+    proxy_pass $tm_api$request_uri;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
