@@ -22,7 +22,7 @@
  */
 
 import { useQuery } from "@tanstack/react-query";
-import { sharePath, sharedFolderPath } from "@tripmate/core";
+import { kstStamp, sharePath, sharedFolderPath } from "@tripmate/core";
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { api } from "../../api/client.ts";
@@ -60,13 +60,11 @@ interface ViewerFolder {
 
 type Sort = "up" | "taken";
 
-const pad = (n: number): string => String(n).padStart(2, "0");
-
-function stamp(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return `${pad(d.getMonth() + 1)}.${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
+/**
+ * 촬영/업로드 시각. **항상 한국 시간이다** — 링크를 받은 사람이 어느 나라에서 열든 같은 숫자다.
+ * 앱 화면(Lightbox)과 같은 규칙을 쓴다. 복사본을 두면 한쪽만 고쳐진다.
+ */
+const stamp = (iso: string): string => kstStamp(iso);
 
 const isVideo = (mime: string): boolean => mime.startsWith("video/");
 

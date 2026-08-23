@@ -55,6 +55,12 @@ TripMate는 이 넷을 **하나의 여행 모임 = 하나의 작업 공간**으�
 - **업로드 대상은 지금 열어 둔 폴더다.** 앱이 촬영 시각 등으로 자동 분류해 옮기지 않는다.
 - 정렬은 **업로드순이 기본**, **촬영순**을 선택할 수 있다.
   **촬영 시각 메타데이터가 없으면 업로드 시각을 촬영 시각으로 믿는다.**
+- **화면에 찍히는 시각은 전부 한국 시간(KST)이다.** 규칙은 `packages/core/src/tz.ts` 한 곳뿐이고,
+  서버와 브라우저가 같은 함수를 부른다. `Date#getHours()` 나 `new Date(문자열)` 을 시각 표시·
+  EXIF 해석에 쓰지 않는다 — **그 코드가 도는 기계의 시간대**를 따라가서, 개발 PC(KST)와
+  서버(UTC)가 같은 사진을 9시간 다르게 저장하고 해외에서 열면 또 다른 숫자가 보인다.
+  **EXIF 촬영 시각에는 시간대가 없다** — 카메라가 시간대를 적어 뒀으면 그걸 믿고, 없으면 KST 로 친다.
+  경위는 `docs/decisions/2026-08-23-korea-time.md`.
 
 > ⚠️ **공유는 TripMate가 관리한다. Drive 공유 링크를 밖으로 내보내지 않는다.**
 > Drive는 저장소일 뿐이다. 공유 규칙:
@@ -294,7 +300,7 @@ Transfer { from, to, amt, state }                  # state: null | "req" | "done
 기획(이 문서) → 프로토타입 → **실제 서비스** 순서로 자랐다. 셋이 어긋나면 기획이 흔들린다.
 
 ```
-packages/core/                  ★ 정산 알고리즘 · 통화 · 일차 · 시각 · 공유 범위 (서버와 브라우저가 공유)
+packages/core/                  ★ 정산 알고리즘 · 통화 · 일차 · 시각 · 시간대 · 공유 범위 (서버와 브라우저가 공유)
 apps/api/                       Fastify 5 + Kysely + Postgres
 apps/web/                       React 19 + Vite + TanStack Query
 prototype/index.html            단일 파일 프로토타입 — 디자인과 상호작용의 시각적 정본
@@ -310,6 +316,7 @@ docs/decisions/2026-08-20-settle-confirm-amounts.md  이체·수령 확인을 �
 docs/decisions/2026-08-22-kakao-and-drive-live.md    카카오·Drive 실연동 결과와 남은 구멍 셋 (프로젝트 분리 · 게시 URL · 드라이버 전환)
 docs/decisions/2026-08-23-upload-progress.md         업로드 진행률을 파일별로 쪼갠 이유 (fetch 에는 진행 이벤트가 없다)
 docs/decisions/2026-08-23-settled-items.md           "이미 정산함"을 정산 제외와 다른 상태로 둔 이유
+docs/decisions/2026-08-23-korea-time.md              시각을 전부 한국 시간으로 고정한 이유 (EXIF·표시 두 겹으로 밀려 있었다)
 docs/design/pencil/trip-mate-prototype.pen           Pencil 디자인 — A 일정 / B 모달 / C 로그인
 .claude/agents/                 api-module · web-screen · settlement-guard · share-auditor
 CLAUDE.md                       이 문서 — 기획 정본

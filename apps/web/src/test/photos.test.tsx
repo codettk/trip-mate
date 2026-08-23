@@ -12,17 +12,18 @@
  *  · 중지·주소 재발급 확인은 브라우저 confirm 이 아니라 모달이다
  *  · 정렬은 업로드순이 기본이고 촬영순을 고를 수 있다
  *  · 업로드는 **파일 하나에 요청 하나**이고, 파일마다 몇 % · 전체 중 몇 개인지 화면이 말한다
+ *  · 시각은 **보는 사람 기기가 아니라 한국 시간**으로 찍는다 (해외에서 열어도 같은 숫자)
  */
 
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import * as F from "./fixtures.ts";
 import { actionLabels, renderApp, visibleText } from "./harness.tsx";
-import type { FakeApiOptions } from "./server.ts";
+import type { Ctx, FakeApiOptions } from "./server.ts";
 import { clipboardWrites } from "./setup.ts";
 
-async function openPhotos(path = "", opts: FakeApiOptions = {}) {
-  const h = renderApp(`/g/${F.GID}/photos${path}`, {}, opts);
+async function openPhotos(path = "", opts: FakeApiOptions = {}, overrides = {}) {
+  const h = renderApp(`/g/${F.GID}/photos${path}`, overrides, opts);
   await screen.findByText("폴더", { selector: "h3" });
   return h;
 }
@@ -247,6 +248,32 @@ describe("사진 화면", () => {
     expect(visibleText()).toContain("실패 1");
     // 100% = 완료가 아니라는 사실을 화면이 직접 말한다
     expect(visibleText()).toContain("서버까지 보낸 양");
+  });
+
+  it("사진 시각을 보는 사람 기기가 아니라 한국 시간으로 찍는다", async () => {
+    // UTC 로 08.22 15:30 = 한국 08.23 00:30. 날짜까지 넘어가는 값을 일부러 골랐다 —
+    // 기기 시간대를 쓰면 이 테스트를 어느 나라에서 돌리느냐에 따라 답이 달라진다.
+    const photo = {
+      id: "p-tz",
+      name: "20260823_003000.jpg",
+      mime: "image/jpeg",
+      size: 1024,
+      folderId: "f-root",
+      uploadedAt: "2026-08-22T15:30:00.000Z",
+      takenAt: "2026-08-22T15:30:00.000Z",
+      takenFallback: false,
+      url: "/api/media/p-tz",
+    };
+    await openPhotos("", {}, {
+      "GET /api/groups/:gid/folders/:fid": ({ params }: Ctx) => ({
+        ...F.folderView(params.fid ?? "f-root"),
+        photos: [photo],
+      }),
+    });
+
+    await screen.findByText("08.23 00:30");
+    // 절대 나오면 안 되는 값: UTC 그대로(15:30)거나 기기 시간대로 찍은 값
+    expect(visibleText()).not.toContain("08.22 15:30");
   });
 
   it("폴더 조회가 실패하면 흰 화면 대신 오류 상자를 보여 준다", async () => {

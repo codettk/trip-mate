@@ -7,8 +7,13 @@
  *
  * 업로드 대상은 **지금 열어 둔 폴더**다. 촬영 시각 등으로 자동 분류해 다른 폴더로 옮기지 않는다.
  * EXIF 촬영 시각은 정렬(촬영순)에만 쓴다. 없으면 업로드 시각을 촬영 시각으로 믿고 배지로 알린다.
+ *
+ * ⚠ EXIF 촬영 시각에는 **시간대가 없다.** 그냥 `new Date(문자열)` 로 만들면 이 코드가 도는
+ *   기계의 시간대로 해석돼, 개발 PC(KST)와 Render(UTC)가 같은 사진을 9시간 다르게 저장한다.
+ *   해석 규칙은 core 의 `exifInstant()` 한 곳에만 있다 — 서버와 브라우저가 같은 규칙을 쓴다.
  */
 
+import { exifInstant } from "@tripmate/core";
 import exifr from "exifr";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
@@ -98,33 +103,34 @@ const EMPTY_EXIF: ExifInfo = { takenAt: null, width: null, height: null };
 async function readExif(body: Buffer, mime: string): Promise<ExifInfo> {
   if (!mime.startsWith("image/")) return EMPTY_EXIF; // 동영상은 EXIF 가 없다
   try {
-    const raw: unknown = await exifr.parse(body, [
-      "DateTimeOriginal",
-      "CreateDate",
-      "ExifImageWidth",
-      "ExifImageHeight",
-      "ImageWidth",
-      "ImageHeight",
-    ]);
+    // reviveValues:false — 날짜를 Date 로 되살리지 못하게 막는다. 되살리는 순간
+    // 시간대가 이 기계에 묶인다. 원문 문자열을 받아 exifInstant() 가 규칙대로 읽는다.
+    const raw: unknown = await exifr.parse(body, {
+      reviveValues: false,
+      pick: [
+        "DateTimeOriginal",
+        "CreateDate",
+        "OffsetTimeOriginal",
+        "OffsetTime",
+        "ExifImageWidth",
+        "ExifImageHeight",
+        "ImageWidth",
+        "ImageHeight",
+      ],
+    });
     if (!raw || typeof raw !== "object") return EMPTY_EXIF;
     const tag = raw as Record<string, unknown>;
 
-    const when = toDate(tag.DateTimeOriginal) ?? toDate(tag.CreateDate);
+    // 카메라가 시간대를 적어 뒀으면 그걸 믿고, 없으면 한국 시간으로 친다.
+    const offset = tag.OffsetTimeOriginal ?? tag.OffsetTime;
+    const when =
+      exifInstant(tag.DateTimeOriginal, offset) ?? exifInstant(tag.CreateDate, offset);
     const width = toInt(tag.ExifImageWidth) ?? toInt(tag.ImageWidth);
     const height = toInt(tag.ExifImageHeight) ?? toInt(tag.ImageHeight);
     return { takenAt: when, width, height };
   } catch {
     return EMPTY_EXIF;
   }
-}
-
-function toDate(v: unknown): Date | null {
-  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : v;
-  if (typeof v === "string") {
-    const d = new Date(v);
-    return Number.isNaN(d.getTime()) ? null : d;
-  }
-  return null;
 }
 
 function toInt(v: unknown): number | null {

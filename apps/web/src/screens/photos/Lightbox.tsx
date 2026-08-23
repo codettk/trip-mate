@@ -8,20 +8,19 @@
  *   서버가 저장소에서 받아 전달하므로 브라우저는 저장소를 알 필요가 없다.
  */
 
+import { kstStamp } from "@tripmate/core";
 import { useEffect } from "react";
 import type { Photo } from "../../api/types.ts";
 import { Badge } from "../../components/Bits.tsx";
 import { Icon } from "../../components/Icon.tsx";
 import { Modal } from "../../components/Modal.tsx";
 
-/** 촬영/업로드 시각 표기. 금액이 아니므로 mono 를 써도 되지만 여기서는 그냥 tabular 로 둔다. */
-export function stamp(iso: string | null): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${p(d.getMonth() + 1)}.${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
-}
+/**
+ * 촬영/업로드 시각 표기. **항상 한국 시간이다.**
+ * 기기 시간대로 찍으면 같이 보는 앨범인데 사람마다 다른 숫자가 적힌다 —
+ * 해외에서 열면 9시간 어긋난다. 규칙은 core 의 kstStamp() 한 곳에만 있다.
+ */
+export const stamp = (iso: string | null): string => kstStamp(iso);
 
 export const isVideo = (p: Photo): boolean => p.mime.startsWith("video/");
 

@@ -7,6 +7,7 @@
  * 이름을 바꾸면 서버가 저장소(Drive) 파일명도 함께 바꾼다 — 여기서 할 일은 없다.
  */
 
+import { fromKstInput, toKstInput } from "@tripmate/core";
 import { useEffect, useState } from "react";
 import { api } from "../../api/client.ts";
 import { useApiMutation } from "../../api/hooks.ts";
@@ -15,14 +16,12 @@ import { Badge, ErrorBox, Field } from "../../components/Bits.tsx";
 import { Icon } from "../../components/Icon.tsx";
 import { Modal } from "../../components/Modal.tsx";
 
-/** `datetime-local` 이 쓰는 모양(`2026-09-12T18:30`)으로. 초와 시간대는 버린다. */
-function toLocalInput(iso: string | null): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
+/**
+ * `datetime-local` 이 쓰는 모양(`2026-09-12T18:30`)으로. **한국 시간이다.**
+ * 읽을 때와 저장할 때 같은 시간대를 써야 한다 — 한쪽만 기기 시간대면
+ * 해외에서 고칠 때마다 촬영 시각이 9시간씩 밀린다.
+ */
+const toLocalInput = (iso: string | null): string => toKstInput(iso);
 
 export function PhotoEditModal({
   photo,
@@ -53,7 +52,7 @@ export function PhotoEditModal({
       api.patch<{ photo: Photo }>(`/api/groups/${gid}/photos/${photo?.id}`, {
         name: name.trim(),
         // 빈 값은 null 로 보낸다 — "지운다"는 뜻이고 서버가 그렇게 받는다
-        takenAt: taken ? new Date(taken).toISOString() : null,
+        takenAt: taken ? fromKstInput(taken) : null,
         folderId,
       }),
     gid,

@@ -13,7 +13,7 @@
  *  · 확인이 필요한 삭제만 ConfirmModal 을 쓴다 (브라우저 confirm 은 쓰지 않는다).
  */
 
-import { BLOCK_KINDS, BLOCK_LABEL, type BlockKind } from "@tripmate/core";
+import { BLOCK_KINDS, BLOCK_LABEL, kstDateTime, type BlockKind } from "@tripmate/core";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   createContext,
@@ -42,14 +42,11 @@ const KIND_ICON: Record<BlockKind, string> = {
   memo: "doc",
 };
 
-const pad = (n: number): string => String(n).padStart(2, "0");
-
-/** "2026.08.17 14:30". 무엇이 최신인지는 절대 시각이 답한다 — 상대 시간만 두면 값이 흔들려 헷갈린다. */
-function when(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return `${d.getFullYear()}.${pad(d.getMonth() + 1)}.${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
+/**
+ * "2026.08.17 14:30". 무엇이 최신인지는 절대 시각이 답한다 — 상대 시간만 두면 값이 흔들려 헷갈린다.
+ * **한국 시간이다.** 기기 시간대로 찍으면 해외에서 열었을 때 남이 고친 시각이 어긋나 보인다.
+ */
+const when = (iso: string): string => kstDateTime(iso);
 
 /**
  * "방금 전" / "3분 전". 절대 시각과 **나란히** 쓴다.
