@@ -46,6 +46,16 @@ export function ItemDetailModal({ open, gid, item, onClose }: ItemDetailModalPro
     gid,
   );
 
+  /**
+   * "이미 정산함"을 여기서 바로 켜고 끈다. 수정 폼까지 가지 않아도 되는 한 번의 동작이다.
+   * 결제자 지정과 같은 이유로 — 누르는 순간 정산 전체가 다시 계산되고, 이체 금액이 달라지면
+   * 그 금액에 묶여 있던 확인이 무효가 되면서 마감이 자동으로 풀린다.
+   */
+  const setSettled = useApiMutation<boolean, Item>(
+    (settled) => api.patch<Item>(`/api/groups/${gid}/items/${item?.id ?? ""}`, { settled }),
+    gid,
+  );
+
   const del = useApiMutation<void, { ok: boolean }>(
     () => api.del<{ ok: boolean }>(`/api/groups/${gid}/items/${item?.id ?? ""}`),
     gid,
@@ -165,10 +175,12 @@ export function ItemDetailModal({ open, gid, item, onClose }: ItemDetailModalPro
 
           <dt>정산</dt>
           <dd>
-            {item.split ? (
-              <Badge tone="ok">포함</Badge>
-            ) : (
+            {!item.split ? (
               <Badge tone="mute">정산 제외 — 일정만</Badge>
+            ) : item.settled ? (
+              <Badge tone="ok">정산 완료 — 이미 주고받음</Badge>
+            ) : (
+              <Badge tone="ok">포함</Badge>
             )}
           </dd>
 
@@ -215,7 +227,7 @@ export function ItemDetailModal({ open, gid, item, onClose }: ItemDetailModalPro
         </dl>
 
         {/* 결제자 미지정 — 여기서 바로 지정한다. 누르는 순간 정산 전체가 다시 계산된다. */}
-        {item.split && !item.payerId ? (
+        {item.split && !item.settled && !item.payerId ? (
           <div className="field">
             <label>결제자를 지금 지정하세요</label>
             <div className="chips">
@@ -239,7 +251,44 @@ export function ItemDetailModal({ open, gid, item, onClose }: ItemDetailModalPro
           </div>
         ) : null}
 
-        {item.split && parts === 0 ? (
+        {/*
+          이미 주고받았다고 표시하는 자리. 금액은 그대로 두고 계산에서만 뺀다 —
+          정산 토글을 끄는 것(금액을 실제로 지운다)과 다르다.
+        */}
+        {item.split ? (
+          <div className="field">
+            <label>{item.settled ? "이 지출은 정산이 끝났습니다" : "이미 주고받았나요?"}</label>
+            <button
+              type="button"
+              className={item.settled ? "btn btn-ghost" : "btn btn-soft"}
+              disabled={setSettled.isPending}
+              onClick={() => setSettled.mutate(!item.settled)}
+            >
+              <Icon name={item.settled ? "undo" : "check"} />
+              {setSettled.isPending
+                ? "저장 중…"
+                : item.settled
+                  ? "정산에 다시 넣기"
+                  : "정산 완료로 표시"}
+            </button>
+            <p className="hint">
+              {item.settled ? (
+                <>
+                  금액 <b>{formatWon(item.krw)}</b>은 장부에 남아 있고 정산 계산에서만 빠져 있습니다.
+                  이체 목록에도 나타나지 않습니다.
+                </>
+              ) : (
+                <>
+                  현장에서 그 자리에 나눠 냈다면 눌러 주세요. 금액은 남고 이 항목만 정산 계산에서
+                  빠집니다. <b>정산 토글을 끄는 것과 다릅니다</b> — 끄면 금액 자체가 지워집니다.
+                </>
+              )}
+            </p>
+            {setSettled.isError ? <ErrorBox error={setSettled.error} /> : null}
+          </div>
+        ) : null}
+
+        {item.split && !item.settled && parts === 0 ? (
           <div className="tip warn">
             <Icon name="bulb" size={15} />
             <span>

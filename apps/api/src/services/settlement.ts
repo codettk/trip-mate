@@ -47,6 +47,7 @@ export async function loadSettlement(groupId: string): Promise<SettleResult> {
       "items.rate as rate",
       "items.payer_id as payer",
       "items.guests as guests",
+      "items.settled as settled",
       "days.n as dayN",
       "days.date as date",
     ])
@@ -93,6 +94,7 @@ export async function loadSettlement(groupId: string): Promise<SettleResult> {
     rate: num(r.rate),
     payer: r.payer,
     shared: { members: byItem.get(r.id) ?? [], guests: r.guests },
+    settled: r.settled,
   }));
 
   const tRows = await db

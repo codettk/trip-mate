@@ -68,6 +68,14 @@ export interface SettleItem {
   /** 결제자. 사전 배정하지 않으므로 나중에 채워질 수 있다 */
   payer: string | null;
   shared: SharedWith;
+  /**
+   * **이미 주고받은 항목인가.** 현장에서 그 자리에 나눠 냈거나 따로 정산이 끝난 건이다.
+   *
+   * `split=false`(정산 제외) 와 다르다 — 그쪽은 금액 자체가 없다.
+   * 여기는 **금액·결제자·대상을 그대로 두고 계산에서만 뺀다.** 장부에는 남아야 하기 때문이다.
+   * `split=false` 인 항목에는 붙지 않는다 (금액이 없으니 정산할 것도 없다).
+   */
+  settled: boolean;
 }
 
 /** 멤버 한 명의 잔액 한 줄. */
@@ -79,6 +87,8 @@ export interface Balance {
   spent: number;
   /** 정산 반영액 — 정산 계산에 들어간 금액 Σ (per × 대상 멤버 수) */
   paid: number;
+  /** 이 사람이 결제자인 **이미 정산한** 항목의 합. spent 에는 들어 있고 paid 에는 없다 */
+  settled: number;
   /** 낼 돈 Σ per */
   owed: number;
   /** paid − owed. 전원의 합은 항상 정확히 0 */
@@ -145,6 +155,10 @@ export interface SettleResult {
   inScope: SettleItemComputed[];
   /** split=false — "정산 제외"로 표시한다 */
   excluded: SettleItemComputed[];
+  /** 이미 정산한 항목 — 금액은 살아 있고 계산에서만 빠진다. 마감도 막지 않는다 */
+  settledItems: SettleItemComputed[];
+  /** 이미 정산한 항목의 원화 합 */
+  settledTotal: number;
   /** 결제자가 지정된 + 대상이 1명 이상인 항목. 실제로 계산에 들어간 것 */
   billed: SettleItemComputed[];
   /** 결제자 미지정 — UI 가 따로 안내한다 */

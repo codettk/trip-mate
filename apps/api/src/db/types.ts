@@ -95,6 +95,8 @@ export interface ItemsTable {
   rate: ColumnType<string, number | string, number | string>;
   payer_id: string | null;
   guests: number;
+  /** 이미 주고받은 항목. 금액은 그대로 두고 정산 계산에서만 뺀다 (split=true 일 때만) */
+  settled: boolean;
 
   check_in: ColumnType<string, string | null, string | null> | null;
   check_out: ColumnType<string, string | null, string | null> | null;

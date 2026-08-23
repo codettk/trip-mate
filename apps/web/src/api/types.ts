@@ -102,6 +102,11 @@ export interface Item {
   krw: number;
   payerId: string | null;
   shared: Shared;
+  /**
+   * 이미 주고받은 항목인가. **"정산 제외"(split=false)와 다르다** —
+   * 금액·결제자·대상은 그대로 살아 있고 정산 계산에서만 빠진다.
+   */
+  settled: boolean;
 }
 
 export interface StayChip {
@@ -134,6 +139,8 @@ export interface BalanceRow {
   spent: number;
   /** 정산 반영액 — 정산 계산에 들어간 금액 */
   paid: number;
+  /** 이 사람이 결제자인 **이미 정산한** 항목의 합. spent 에는 있고 paid 에는 없다 */
+  settled: number;
   owed: number;
   net: number;
 }
@@ -172,6 +179,8 @@ export interface SettleItemBrief {
 export interface Settlement {
   total: number;
   guestTotal: number;
+  /** 이미 주고받아 계산에서 뺀 금액. total 에는 들어 있지 않다 */
+  settledTotal: number;
   /** 로그인한 사람의 낼 돈. "1인당 평균"을 쓰지 않는다 */
   myOwed: number;
   closed: boolean;
@@ -184,6 +193,8 @@ export interface Settlement {
   pending: SettleItemBrief[];
   noTarget: SettleItemBrief[];
   excluded: SettleItemBrief[];
+  /** 이미 정산해 계산에서 뺀 항목. 금액은 살아 있다 */
+  settledItems: SettleItemBrief[];
   fxItems: SettleItemBrief[];
 }
 

@@ -333,6 +333,8 @@ export async function seed(log: (s: string) => void): Promise<{ groupId: string 
   for (const day of DAYS) {
     for (const [i, it] of day.items.entries()) {
       const split = it.split === true;
+      // 시드는 "이미 정산함"을 쓰지 않는다 — 정산이 실제로 계산되는 모습을 봐야 하기 때문이다.
+      const settled = false;
       const inserted = await db
         .insertInto("items")
         .values({
@@ -356,6 +358,7 @@ export async function seed(log: (s: string) => void): Promise<{ groupId: string 
           rate: 1, // 전부 원화라 환율 스냅샷은 1
           payer_id: split && it.payer ? memberIds.get(it.payer)! : null,
           guests: split ? (it.guests ?? 0) : 0,
+          settled,
           check_in: it.checkIn ?? null,
           check_out: it.checkOut ?? null,
           sort_order: i,

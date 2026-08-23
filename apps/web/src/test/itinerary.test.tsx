@@ -24,6 +24,25 @@ async function openItinerary() {
 }
 
 describe("일정 화면", () => {
+  it("이미 정산한 항목은 금액을 지우지 않고 '정산 완료' 배지를 붙인다", async () => {
+    // "정산 제외"는 금액 자리에 글자를 쓰지만, 이쪽은 금액이 그대로 남아야 한다.
+    const days = F.itinerary.days.map((d) => ({
+      ...d,
+      items: d.items.map((i) => (i.id === "i10" ? { ...i, settled: true } : i)),
+    }));
+    const { container } = renderApp(`/g/${F.GID}`, {
+      "GET /api/groups/:gid/itinerary": { days },
+    });
+    await screen.findAllByText("정산 대상 지출");
+    fireEvent.click(dayTab(container, 2));
+    await screen.findByText("애월 카페 · 야경");
+
+    const card = screen.getByText("애월 카페 · 야경").closest(".icard")!;
+    expect(card.textContent).toContain("정산 완료");
+    expect(card.textContent).toContain("28,000"); // 금액이 살아 있다
+    expect(card.textContent).not.toContain("정산 제외");
+  });
+
   it("에러 없이 마운트되고 통계·탭·타임라인이 모두 보인다", async () => {
     const { container, api } = await openItinerary();
 

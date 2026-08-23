@@ -118,6 +118,8 @@ interface ItemSeed {
   payerId?: string | null;
   members?: string[];
   guests?: number;
+  /** 이미 주고받은 건. split=true 일 때만 뜻이 있다 */
+  settled?: boolean;
   checkIn?: string;
   checkOut?: string;
   nights?: number;
@@ -171,6 +173,7 @@ function toItem(s: ItemSeed): Item {
     meta: s.meta,
     booked: s.booked === true,
     thumb: s.thumb ?? null,
+    settled: s.settled === true,
     checkIn: s.checkIn ?? null,
     checkOut: s.checkOut ?? null,
     nights: s.nights ?? 0,
@@ -238,7 +241,7 @@ export const itinerary: Itinerary = {
 
 /* ══════════ 정산 ══════════ */
 
-const brief = (id: string) => {
+export const brief = (id: string) => {
   const i = items.find((x) => x.id === id)!;
   return { id: i.id, title: i.title, dayN: i.dayN, date: i.date, cat: i.cat, cost: i.cost, cur: i.cur, krw: i.krw, payerId: i.payerId };
 };
@@ -251,17 +254,20 @@ const brief = (id: string) => {
 export const settlement: Settlement = {
   total: 1658570,
   guestTotal: 51428,
+  // 시드에는 "이미 정산함"이 없다. 그 화면은 테스트가 라우트를 덮어써서 따로 본다 —
+  // 여기에 넣으면 손으로 맞춰 둔 잔액이 전부 어긋난다.
+  settledTotal: 0,
   myOwed: 415214, // 지현의 낼 돈 ("1인당 평균"이 아니다)
   closed: false,
   closedAt: null,
   doneCount: 0,
   totalSteps: 5, // 이체 4건 + 기타 인원 수령 확인 1건
   balance: [
-    { id: M.jh, name: "지현", left: false, spent: 684000, paid: 684000, owed: 415214, net: 268786 },
-    { id: M.ms, name: "민수", left: false, spent: 540000, paid: 540000, owed: 415214, net: 124786 },
-    { id: M.sa, name: "수아", left: false, spent: 222000, paid: 170570, owed: 401214, net: -230644 },
-    { id: M.yh, name: "윤호", left: false, spent: 264000, paid: 264000, owed: 401214, net: -137214 },
-    { id: M.gy, name: "기영", left: true, spent: 0, paid: 0, owed: 25714, net: -25714 },
+    { id: M.jh, name: "지현", left: false, spent: 684000, paid: 684000, settled: 0, owed: 415214, net: 268786 },
+    { id: M.ms, name: "민수", left: false, spent: 540000, paid: 540000, settled: 0, owed: 415214, net: 124786 },
+    { id: M.sa, name: "수아", left: false, spent: 222000, paid: 170570, settled: 0, owed: 401214, net: -230644 },
+    { id: M.yh, name: "윤호", left: false, spent: 264000, paid: 264000, settled: 0, owed: 401214, net: -137214 },
+    { id: M.gy, name: "기영", left: true, spent: 0, paid: 0, settled: 0, owed: 25714, net: -25714 },
   ],
   transfers: [
     { fromId: M.sa, fromName: "수아", toId: M.jh, toName: "지현", amt: 230644, state: "req", canAct: "done" },
@@ -273,6 +279,7 @@ export const settlement: Settlement = {
   pending: [brief("i4"), brief("i9"), brief("i13")],
   noTarget: [],
   excluded: [brief("i8"), brief("i14")],
+  settledItems: [],
   fxItems: [],
 };
 

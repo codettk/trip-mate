@@ -36,8 +36,8 @@ function parseUuid(v: unknown, what: string): string {
 
 /**
  * 안내용으로 줄인 항목.
- * 결제자 미지정 · 대상 없음 · 정산 제외 · 외화 항목은 화면에서 **따로** 안내되어야 하므로
- * 네 목록을 합치지 않고 그대로 각각 내보낸다.
+ * 결제자 미지정 · 대상 없음 · 정산 제외 · 이미 정산함 · 외화 항목은 화면에서 **따로**
+ * 안내되어야 하므로 다섯 목록을 합치지 않고 그대로 각각 내보낸다.
  */
 const slim = (i: SettleItemComputed) => ({
   id: i.id,
@@ -76,6 +76,8 @@ async function settlementResponse(groupId: string, meMemberId: string) {
   return {
     total: r.total,
     guestTotal: r.guestTotal,
+    /** 이미 주고받아 계산에서 뺀 금액. total 에는 들어 있지 않다 */
+    settledTotal: r.settledTotal,
     /** 로그인한 사람이 실제로 낼 돈. 전원 균등 가정 숫자가 아니다 */
     myOwed: r.balance.find((b) => b.id === meMemberId)?.owed ?? 0,
     closed: r.closed,
@@ -90,6 +92,9 @@ async function settlementResponse(groupId: string, meMemberId: string) {
       left: b.left,
       spent: b.spent,
       paid: b.paid,
+      // spent 와 paid 가 왜 다른지 화면이 숫자로 설명할 수 있어야 한다 —
+      // 이미 정산한 금액은 spent 에만 있고 paid 에는 없다.
+      settled: b.settled,
       owed: b.owed,
       net: b.net,
     })),
@@ -116,6 +121,7 @@ async function settlementResponse(groupId: string, meMemberId: string) {
     pending: r.pending.map(slim),
     noTarget: r.noTarget.map(slim),
     excluded: r.excluded.map(slim),
+    settledItems: r.settledItems.map(slim),
     fxItems: r.fxItems.map(slim),
   };
 }

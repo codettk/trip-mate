@@ -4,15 +4,17 @@
  * 확인하는 확정 규칙:
  *  · **실제 결제액**과 **정산 반영액**을 서로 다른 이름으로 둘 다 보여 준다 (수아 222,000 vs 170,570)
  *  · 나간 멤버(기영)는 회색 아바타 + "나감"으로 남고 계산에서 빠지지 않는다
- *  · 정산 제외 / 결제자 미지정 / 정산 대상 없음을 합치지 않고 따로 안내한다
+ *  · 정산 제외 / 결제자 미지정 / 정산 대상 없음 / 이미 정산함을 합치지 않고 따로 안내한다
+ *  · **"정산 제외"와 "이미 정산함"은 다른 것이다** — 앞은 금액이 없고, 뒤는 금액이 살아 있다
  *  · 이체 버튼은 서버가 준 `canAct` 가 있는 줄에만 켠다 — 남이 대신 눌러 줄 수 없다
  *  · 전원 균등 가정 숫자를 만들지 않는다. 금액은 전부 원 단위 정수다
  */
 
-import { fireEvent, screen, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import * as F from "./fixtures.ts";
 import { renderApp, visibleText } from "./harness.tsx";
+import type { Ctx } from "./server.ts";
 
 async function openSettlement(overrides = {}) {
   const h = renderApp(`/g/${F.GID}/settle`, overrides);
@@ -121,6 +123,57 @@ describe("정산 화면", () => {
 
     // 대상 없음이 0건이면 그 카드는 아예 그리지 않는다
     expect(screen.queryByText("정산 대상 없음")).toBeNull();
+  });
+
+  it("'이미 정산함'을 '정산 제외'와 같은 목록에 넣지 않는다 (금액이 있는 것과 없는 것)", async () => {
+    await openSettlement({
+      "GET /api/groups/:gid/settlement": {
+        ...F.settlement,
+        settledTotal: 28000,
+        settledItems: [F.brief("i10")], // 애월 카페 · 야경 · ₩28,000
+        // 지현이 28,000 을 실제로 냈지만 정산 반영액에는 없다 — 그 차이를 화면이 설명해야 한다
+        balance: F.settlement.balance.map((b) =>
+          b.name === "지현" ? { ...b, spent: b.spent + 28000, settled: 28000 } : b,
+        ),
+      },
+    });
+
+    const settled = screen.getByText("이미 정산함", { selector: "h3" }).closest(".card")!;
+    expect(within(settled as HTMLElement).getByText("1건")).toBeTruthy();
+    expect(settled.textContent).toContain("애월 카페 · 야경");
+    // 금액이 살아 있다 — "정산 제외"는 — 로 나오지만 이쪽은 숫자가 나온다
+    expect(settled.textContent).toContain("28,000");
+
+    // 정산 제외 카드는 그대로 따로 있다
+    const excluded = screen.getByText("정산 제외", { selector: "h3" }).closest(".card")!;
+    expect(excluded.textContent).not.toContain("애월 카페");
+
+    // 위 합계에서 빠졌다는 사실을 숫자로 말한다
+    expect(visibleText()).toContain("이미 정산한 지출 (위 합계에서 빠짐)");
+
+    // 실제 결제액과 정산 반영액의 차이를 "반올림"으로 뭉뚱그리지 않는다
+    expect(visibleText()).toContain("이미 정산한 항목 28,000원");
+  });
+
+  it("'정산에 다시 넣기'는 그 항목의 settled 만 끈다", async () => {
+    const { api } = await openSettlement({
+      "GET /api/groups/:gid/settlement": {
+        ...F.settlement,
+        settledTotal: 28000,
+        settledItems: [F.brief("i10")],
+      },
+      "PATCH /api/groups/:gid/items/:iid": ({ params }: Ctx) => ({ id: params.iid }),
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /정산에 다시 넣기/ }));
+
+    await waitFor(() => {
+      const call = api.calls.find((c) => c.method === "PATCH" && c.path.includes("/items/"));
+      expect(call).toBeTruthy();
+      expect(call!.path).toBe(`/api/groups/${F.GID}/items/i10`);
+      // 금액·결제자·대상을 건드리지 않는다. 보내는 것은 이 한 필드뿐이다.
+      expect(call!.body).toEqual({ settled: false });
+    });
   });
 
   it("전원 균등 가정 문구 없이 '내 부담액'만 쓴다", async () => {

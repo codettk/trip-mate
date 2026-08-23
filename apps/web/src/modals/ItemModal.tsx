@@ -117,6 +117,8 @@ interface Draft {
   checkInTime: string;
   checkOutTime: string;
   split: boolean;
+  /** 이미 주고받은 건. 금액은 그대로 두고 정산 계산에서만 뺀다 */
+  settled: boolean;
   /** 외화 소수 입력을 그대로 받기 위해 문자열로 둔다. 환산·정산은 언제나 원화 정수다. */
   cost: string;
   cur: string;
@@ -181,6 +183,7 @@ export function ItemModal({ open, gid, item, defaultDayId, onClose }: ItemModalP
         checkInTime: item.checkInTime,
         checkOutTime: item.checkOutTime,
         split: item.split,
+        settled: item.split && item.settled,
         cost: item.split ? String(item.cost) : "",
         cur: item.split ? item.cur : groupQ.data.group.cur,
         payerId: item.payerId ?? "",
@@ -206,6 +209,7 @@ export function ItemModal({ open, gid, item, defaultDayId, onClose }: ItemModalP
       checkInTime: "",
       checkOutTime: "",
       split: false,
+      settled: false,
       cost: "",
       cur: groupQ.data.group.cur,
       payerId: "",
@@ -309,6 +313,8 @@ export function ItemModal({ open, gid, item, defaultDayId, onClose }: ItemModalP
       checkOutTime: isStay ? checkOutTime : "",
       // split 이 꺼져 있으면 금액을 아예 보내지 않는다 — 서버도 같은 규칙으로 한 번 더 비운다.
       split: draft.split,
+      // 정산 제외 항목에는 붙지 않는다 — 금액이 없으면 정산할 것도 없다.
+      settled: draft.split && draft.settled,
       cost: draft.split ? cost : 0,
       cur: draft.split ? draft.cur : groupCur,
       payerId: draft.split && draft.payerId ? draft.payerId : null,
@@ -669,6 +675,33 @@ export function ItemModal({ open, gid, item, defaultDayId, onClose }: ItemModalP
               )}
             </p>
           </div>
+
+          {/*
+            이미 주고받은 건. **정산 토글을 끄는 것과 다르다** —
+            끄면 금액이 실제로 지워지고, 여기는 금액을 그대로 둔 채 계산에서만 뺀다.
+            현장에서 그 자리에 나눠 내는 일이 흔해서 그 둘을 구분해야 한다.
+          */}
+          <label className="chk">
+            <input
+              type="checkbox"
+              checked={draft.settled}
+              onChange={(e) => set({ settled: e.target.checked })}
+            />
+            이 지출은 이미 정산했습니다
+          </label>
+          <p className="hint">
+            {draft.settled ? (
+              <>
+                금액은 <b>장부에 그대로 남고</b> 정산 계산에서만 빠집니다. 이체 목록에도 나타나지
+                않습니다. 정산 토글을 끄는 것과 다릅니다 — 끄면 금액 자체가 지워집니다.
+              </>
+            ) : (
+              <>
+                현장에서 그 자리에 나눠 냈다면 켜 주세요. 금액은 남고 이 항목만 정산 계산에서
+                빠집니다.
+              </>
+            )}
+          </p>
         </>
       ) : null}
 

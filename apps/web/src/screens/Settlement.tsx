@@ -9,7 +9,9 @@
  *  · **"1인당 평균" 같은 전원 균등 가정 숫자를 만들지 않는다.** 정산 대상은 항목마다 다르므로
  *    아무도 실제로 부담하지 않는 금액이라 오해만 만든다. 대신 myOwed(내 부담액)를 쓴다.
  *  · **나간 멤버도 계산에서 빼지 않는다.** 빼면 잔액 합이 0이 되지 않는다. 회색 아바타 + "나감"으로만 표시한다.
- *  · **정산 제외 / 결제자 미지정 / 정산 대상 없음은 세 목록으로 각각 따로 안내한다.** 합치면 왜 빠졌는지 알 수 없다.
+ *  · **정산 제외 / 결제자 미지정 / 정산 대상 없음 / 이미 정산함은 네 목록으로 각각 따로 안내한다.**
+ *    합치면 왜 빠졌는지 알 수 없다. 특히 **"정산 제외"와 "이미 정산함"은 다른 것이다** —
+ *    앞은 금액 자체가 없고, 뒤는 금액이 살아 있는 채로 계산에서만 빠진다.
  *  · **입금 여부를 시스템이 판단하지 않는다.** 대기 → (보낸 사람) 송금 확인 요청 → (받는 사람) 정산 완료.
  *    버튼은 서버가 채워 준 canAct 가 있는 줄에만 켠다.
  *  · 금액은 전부 원 단위 정수다. 소수점이 화면에 나오지 않는다.
@@ -23,7 +25,14 @@ import { CATEGORY_LABEL, formatWon, type Category } from "@tripmate/core";
 import { useMemo, useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api/client.ts";
-import { keys, useGroup, useItinerary, useMembers, useSettlement } from "../api/hooks.ts";
+import {
+  keys,
+  useApiMutation,
+  useGroup,
+  useItinerary,
+  useMembers,
+  useSettlement,
+} from "../api/hooks.ts";
 import type {
   BalanceRow,
   CollectorRow,
@@ -70,6 +79,15 @@ export function SettlementScreen() {
     onSuccess: (data) => qc.setQueryData(keys.settlement(gid), data),
   });
 
+  /**
+   * "이미 정산함"을 되돌린다. 항목 PATCH 라 응답이 정산 결과가 아니므로 캐시를 무효화한다 —
+   * 항목 하나가 계산에 들어오면 이체 목록 전체가 다시 짜인다. 부분 갱신을 손으로 만들지 않는다.
+   */
+  const undoSettled = useApiMutation<string, unknown>(
+    (id) => api.patch(`/api/groups/${gid}/items/${id}`, { settled: false }),
+    gid,
+  );
+
   const meId = group.data?.me.memberId ?? "";
 
   const avatarOf = useMemo(() => {
@@ -82,7 +100,10 @@ export function SettlementScreen() {
     };
   }, [members.data]);
 
-  /** 결제자별 지출 건수. 실제 결제액 옆에 붙여 "무엇의 합인지" 알려 준다. */
+  /**
+   * 결제자별 지출 건수. 실제 결제액 옆에 붙여 "무엇의 합인지" 알려 준다.
+   * 이미 정산한 항목도 **실제로 결제한 건**이므로 여기서는 빼지 않는다 (spent 와 같은 기준).
+   */
   const paidCount = useMemo(() => {
     const c = new Map<string, number>();
     for (const d of itinerary.data?.days ?? []) {
@@ -148,13 +169,24 @@ export function SettlementScreen() {
                 <Won v={s.total} />
               </span>
             </div>
+            {/* 이미 주고받은 금액은 위 합계에 들어 있지 않다. 빠졌다는 사실을 숫자로 말한다. */}
+            {s.settledTotal ? (
+              <div className="lfoot" style={{ borderTop: "1px solid var(--line-2)" }}>
+                <span style={{ color: "var(--ink-2)", fontWeight: 500 }}>
+                  이미 정산한 지출 (위 합계에서 빠짐)
+                </span>
+                <span className="v" style={{ color: "var(--ink-2)" }}>
+                  <Won v={s.settledTotal} />
+                </span>
+              </div>
+            ) : null}
           </div>
 
           <p className="note">
             <b>실제 결제액</b>은 그 사람이 실제로 낸 돈이고, <b>정산 반영액</b>은 정산 계산에 들어간
             금액입니다. 1인 몫을 원 단위로 반올림하면서 남는 1~2원은 결제자가 부담하고, 모임 밖
-            인원 몫은 앱이 청구할 대상이 없어 빠지기 때문에 둘이 조금 다를 수 있습니다. 잔액의 합은
-            항상 정확히 0 입니다.
+            인원 몫은 앱이 청구할 대상이 없어 빠지며, <b>이미 정산한 항목</b>은 금액이 남은 채로
+            계산에서만 빠지기 때문에 둘이 다를 수 있습니다. 잔액의 합은 항상 정확히 0 입니다.
           </p>
 
           {s.balance.some((b) => b.left) ? (
@@ -193,6 +225,20 @@ export function SettlementScreen() {
             hint="이 돈을 나눠 낼 사람이 한 명도 선택되지 않았습니다. 대상을 고르거나, 정산에 넣지 않을 항목이라면 정산 토글을 꺼 주세요."
             items={s.noTarget}
             to={`/g/${gid}`}
+          />
+          {/*
+            "정산 제외"와 "이미 정산함"을 한 목록에 합치지 않는다.
+            앞은 금액이 없는 항목이고 뒤는 금액이 살아 있는 항목이라, 합치면
+            "왜 이 돈이 합계에 없지?"에 답을 못 한다.
+          */}
+          <ItemList
+            title="이미 정산함"
+            tone="ok"
+            icon="check"
+            hint="현장에서 이미 주고받은 항목입니다. 금액은 장부에 그대로 남아 있고 정산 계산과 이체 목록에서만 빠져 있습니다. 되돌리면 그 자리에서 다시 계산됩니다."
+            items={s.settledItems}
+            onUndo={(id) => undoSettled.mutate(id)}
+            undoBusy={undoSettled.isPending}
           />
           <ItemList
             title="정산 제외"
@@ -357,15 +403,23 @@ export function SettlementScreen() {
 
 /**
  * 실제 결제액과 정산 반영액이 왜 다른지 한 문장으로 설명한다.
- * 차이 = 기타 인원 몫 + (정산 대상이 비어 계산에서 통째로 빠진 항목) + 반올림 잔돈.
+ * 차이 = 이미 정산한 항목 + 기타 인원 몫 + (정산 대상이 비어 통째로 빠진 항목) + 반올림 잔돈.
  * 숫자를 새로 만들지 않고 서버가 준 값들을 뺄셈해서 내역을 나눈다.
+ *
+ * ⚠ 이미 정산한 금액(b.settled)을 빼먹으면 그 금액이 통째로 "반올림 잔돈"에 섞여 들어가
+ *   ₩300,000 을 반올림으로 흡수했다는 거짓말이 된다. 항목이 늘면 반드시 여기에도 더한다.
  */
-function diffNote(b: BalanceRow, guestAmt: number, noTargetAmt: number): string | null {
+function diffNote(
+  b: BalanceRow,
+  guestAmt: number,
+  noTargetAmt: number,
+): string | null {
   const diff = b.spent - b.paid;
   if (diff === 0) return null;
 
-  const rounding = diff - guestAmt - noTargetAmt;
+  const rounding = diff - guestAmt - noTargetAmt - b.settled;
   const parts: string[] = [];
+  if (b.settled > 0) parts.push(`이미 정산한 항목 ${won(b.settled)}`);
   if (guestAmt > 0) parts.push(`기타 인원 몫 ${won(guestAmt)}`);
   if (noTargetAmt > 0) parts.push(`정산 대상이 비어 있는 항목 ${won(noTargetAmt)}`);
   if (rounding > 0) parts.push(`반올림으로 결제자가 흡수한 ${won(rounding)}`);
@@ -605,14 +659,19 @@ function ItemList({
   hint,
   items,
   to,
+  onUndo,
+  undoBusy,
 }: {
   title: string;
-  tone: "warn" | "mute";
+  tone: "warn" | "mute" | "ok";
   icon: string;
   hint: string;
   items: SettleItemBrief[];
   /** 있으면 항목을 눌러 일정 화면으로 갈 수 있다 */
   to?: string;
+  /** 있으면 줄마다 "정산에 다시 넣기" 버튼이 붙는다 */
+  onUndo?: (id: string) => void;
+  undoBusy?: boolean;
 }) {
   if (!items.length) return null;
 
@@ -641,6 +700,16 @@ function ItemList({
               <span className="v">
                 {i.krw ? <Won v={i.krw} /> : <span style={{ color: "var(--ink-3)" }}>—</span>}
               </span>
+              {onUndo ? (
+                <button
+                  className="btn btn-ghost btn-sm"
+                  disabled={undoBusy}
+                  onClick={() => onUndo(i.id)}
+                >
+                  <Icon name="undo" />
+                  정산에 다시 넣기
+                </button>
+              ) : null}
               {to ? <Icon name="chev" size={14} /> : null}
             </>
           );

@@ -112,6 +112,104 @@ describe("통화와 환율", () => {
   });
 });
 
+describe("이미 정산함 (settled)", () => {
+  /**
+   * "정산 제외"(split=false)와 다르다는 것을 서버 응답으로 확인한다.
+   *   정산 제외 → 금액이 실제로 0 이 된다.
+   *   이미 정산 → 금액·결제자·대상이 그대로 남고 정산 계산에서만 빠진다.
+   */
+  it("금액은 그대로 남고 정산 계산에서만 빠진다", async () => {
+    const before = (await jh.fetch(`/api/groups/${gid}/settlement`)).body;
+
+    const created = (
+      await jh.fetch(`/api/groups/${gid}/items`, {
+        method: "POST",
+        body: JSON.stringify({
+          dayId: it0.days[0].id,
+          cat: "food",
+          title: "현장에서 나눠 낸 저녁",
+          split: true,
+          cost: 40000,
+          payerId: memberId("지현"),
+          shared: { members: [memberId("지현"), memberId("수아")], guests: 0 },
+          settled: true,
+        }),
+      })
+    ).body;
+    const ns = created.item ?? created;
+
+    // 금액이 살아 있다 — 이게 split=false 와 갈리는 지점이다
+    expect(ns.settled).toBe(true);
+    expect(ns.cost).toBe(40000);
+    expect(ns.krw).toBe(40000);
+    expect(ns.payerId).toBe(memberId("지현"));
+    expect(ns.shared.members.length).toBe(2);
+
+    const after = (await jh.fetch(`/api/groups/${gid}/settlement`)).body;
+    // 정산 대상 지출은 그대로다 (계산에 안 들어갔다)
+    expect(after.total).toBe(before.total);
+    expect(after.settledTotal).toBe(before.settledTotal + 40000);
+    expect(after.settledItems.map((i: any) => i.id)).toContain(ns.id);
+    // 정산 제외 목록에는 없다 — 두 목록을 섞지 않는다
+    expect(after.excluded.map((i: any) => i.id)).not.toContain(ns.id);
+    // 실제 결제액에는 남는다
+    const jhBalance = after.balance.find((b: any) => b.name === "지현");
+    const jhBefore = before.balance.find((b: any) => b.name === "지현");
+    expect(jhBalance.spent).toBe(jhBefore.spent + 40000);
+    expect(jhBalance.paid).toBe(jhBefore.paid);
+    expect(jhBalance.settled).toBe(40000);
+    expectSettlementInvariants(after);
+
+    // 되돌리면 곧바로 계산에 들어온다
+    const undone = (
+      await jh.fetch(`/api/groups/${gid}/items/${ns.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ settled: false }),
+      })
+    ).body;
+    expect((undone.item ?? undone).settled).toBe(false);
+    const back = (await jh.fetch(`/api/groups/${gid}/settlement`)).body;
+    expect(back.total).toBe(before.total + 40000);
+    expect(back.settledTotal).toBe(before.settledTotal);
+    expectSettlementInvariants(back);
+
+    await jh.fetch(`/api/groups/${gid}/items/${ns.id}`, { method: "DELETE" });
+  });
+
+  it("정산 토글을 끄면 settled 도 같이 꺼진다 (금액 없는 항목에 붙을 수 없다)", async () => {
+    const created = (
+      await jh.fetch(`/api/groups/${gid}/items`, {
+        method: "POST",
+        body: JSON.stringify({
+          dayId: it0.days[0].id,
+          cat: "food",
+          title: "정산 껐다 켰다",
+          split: true,
+          cost: 10000,
+          payerId: memberId("지현"),
+          shared: { members: [memberId("지현")], guests: 0 },
+          settled: true,
+        }),
+      })
+    ).body;
+    const ns = created.item ?? created;
+    expect(ns.settled).toBe(true);
+
+    const off = (
+      await jh.fetch(`/api/groups/${gid}/items/${ns.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ split: false }),
+      })
+    ).body;
+    const offItem = off.item ?? off;
+    expect(offItem.split).toBe(false);
+    expect(offItem.settled).toBe(false);
+    expect(offItem.cost).toBe(0);
+
+    await jh.fetch(`/api/groups/${gid}/items/${ns.id}`, { method: "DELETE" });
+  });
+});
+
 describe("정산 토글", () => {
   it("split=false 면 금액·결제자·대상이 실제로 비워진다", async () => {
     const res = await jh.fetch(`/api/groups/${gid}/items`, {

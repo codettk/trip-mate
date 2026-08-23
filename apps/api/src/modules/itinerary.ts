@@ -87,12 +87,14 @@ const itemBodySchema = z.object({
   checkInTime: z.string().max(5).default(""),
   checkOutTime: z.string().max(5).default(""),
 
-  // 정산 토글이 꺼져 있으면 아래 넷은 저장 시 서버가 강제로 비운다
+  // 정산 토글이 꺼져 있으면 아래 다섯은 저장 시 서버가 강제로 비운다
   split: z.boolean().default(false),
   cost: z.number().finite().min(0, "금액은 0 이상이어야 합니다").max(1e12).default(0),
   cur: z.string().trim().max(8).optional(),
   payerId: uuid.nullable().default(null),
   shared: sharedSchema.default({ members: [], guests: 0 }),
+  /** 이미 주고받은 건. 금액은 그대로 두고 정산 계산에서만 뺀다 (split=false 면 무조건 false) */
+  settled: z.boolean().default(false),
 });
 
 /** PATCH 는 보낸 필드만 덮어쓴다. 나머지는 기존 값을 그대로 쓴다. */
@@ -137,6 +139,11 @@ interface ItemDto {
   krw: number;
   payerId: string | null;
   shared: { members: string[]; guests: number };
+  /**
+   * 이미 정산이 끝난 항목인가. **"정산 제외"(split=false)와 다르다** —
+   * 금액·결제자·대상이 그대로 살아 있고 계산에서만 빠진다.
+   */
+  settled: boolean;
 }
 
 /**
@@ -184,6 +191,7 @@ async function readItems(groupId: string, itemId?: string): Promise<ItemDto[]> {
       "items.rate as rate",
       "items.payer_id as payerId",
       "items.guests as guests",
+      "items.settled as settled",
       "items.check_in as checkIn",
       "items.check_out as checkOut",
       "items.check_in_time as checkInTime",
@@ -273,6 +281,7 @@ async function readItems(groupId: string, itemId?: string): Promise<ItemDto[]> {
       krw: r.split ? Math.round(cost * rate) : 0,
       payerId: r.payerId,
       shared: { members: byItem.get(r.id) ?? [], guests: r.guests },
+      settled: r.settled,
     };
   });
 }
@@ -308,6 +317,7 @@ interface Normalized {
   payerId: string | null;
   guests: number;
   members: string[];
+  settled: boolean;
 }
 
 /** 정규화에 들어가는 원본 값 (POST 는 body 그대로, PATCH 는 기존 값 위에 body 를 덮은 것). */
@@ -331,6 +341,7 @@ interface Draft {
   payerId: string | null;
   members: string[];
   guests: number;
+  settled: boolean;
 }
 
 /** rate 재스냅샷 판단에 쓰는 이전 상태. 생성이면 없다. */
@@ -432,6 +443,8 @@ async function normalize(groupId: string, draft: Draft, prev?: Prev): Promise<No
       payerId: null,
       guests: 0,
       members: [],
+      // 금액이 없으면 정산할 것도 없다. DB 의 items_settled_needs_split_ck 가 한 번 더 막는다.
+      settled: false,
     };
   }
 
@@ -498,6 +511,7 @@ async function normalize(groupId: string, draft: Draft, prev?: Prev): Promise<No
     payerId: draft.payerId,
     guests: draft.guests,
     members,
+    settled: draft.settled,
   };
 }
 
@@ -623,6 +637,7 @@ export async function itineraryRoutes(app: FastifyInstance): Promise<void> {
       payerId: b.payerId,
       members: b.shared.members,
       guests: b.shared.guests,
+      settled: b.settled,
     });
 
     // 같은 시간대 항목의 표시 순서를 안정시킨다 — 새 항목이 뒤에 붙는다.
@@ -654,6 +669,7 @@ export async function itineraryRoutes(app: FastifyInstance): Promise<void> {
           rate: n.rate,
           payer_id: n.payerId,
           guests: n.guests,
+          settled: n.settled,
           check_in: n.checkIn,
           check_out: n.checkOut,
           check_in_time: n.checkInTime,
@@ -717,6 +733,7 @@ export async function itineraryRoutes(app: FastifyInstance): Promise<void> {
         payerId: b.payerId !== undefined ? b.payerId : cur.payerId,
         members: b.shared?.members ?? cur.shared.members,
         guests: b.shared?.guests ?? cur.shared.guests,
+        settled: b.settled ?? cur.settled,
       },
       { dayId: cur.dayId, cur: cur.cur, rate: cur.rate, split: cur.split },
     );
@@ -739,6 +756,7 @@ export async function itineraryRoutes(app: FastifyInstance): Promise<void> {
           rate: n.rate,
           payer_id: n.payerId,
           guests: n.guests,
+          settled: n.settled,
           check_in: n.checkIn,
           check_out: n.checkOut,
           check_in_time: n.checkInTime,

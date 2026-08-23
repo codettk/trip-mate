@@ -757,8 +757,9 @@ const CAT = {
 
 const S = (members = ALL, guests = 0) => ({members:[...members], guests});
 let _iid = 0;
-/* split:false = 정산에 넣지 않는 일정. 금액·결제자·정산 대상을 아예 갖지 않는다. */
-const It = o => ({id:"i" + (++_iid), meta:"", split:false, cost:0, cur:GROUP.cur, rate:1,
+/* split:false = 정산에 넣지 않는 일정. 금액·결제자·정산 대상을 아예 갖지 않는다.
+   settled:true = **이미 주고받은 건.** 금액은 그대로 두고 계산에서만 뺀다 — split:false 와 다르다. */
+const It = o => ({id:"i" + (++_iid), meta:"", split:false, settled:false, cost:0, cur:GROUP.cur, rate:1,
                   payer:null, shared:{members:[],guests:0}, thumb:null, booked:false,
                   checkIn:null, checkOut:null, ...o});
 
@@ -873,7 +874,10 @@ let openDoc = null;
    · 1인 몫 = round(krw / 인원). 반올림하고 남는 1~2원은 결제자가 부담한다.
      → 그래서 "실제 결제액"과 "정산 반영액"이 항목당 1~2원 다를 수 있다.
    · 기타 인원(모임 밖) 몫은 앱이 청구할 대상이 없으므로 정산에서 빼고 결제자가 직접 받는다.
-   · 나간 멤버도 계산에 그대로 남는다 — 빼면 잔액 합이 0이 되지 않는다. */
+   · 나간 멤버도 계산에 그대로 남는다 — 빼면 잔액 합이 0이 되지 않는다.
+   · settled(이미 정산함)는 split:false(정산 제외)와 다르다. 정산 제외는 금액 자체가 없고,
+     settled 는 금액·결제자·대상이 살아 있는 채로 계산에서만 빠진다. 그래서 실제 결제액에는
+     남고 정산 반영액에는 안 들어간다. 이미 끝난 건이므로 미지정·대상없음으로도 세지 않는다. */
 let TSTATE = {};                                     // "보낸사람>받는사람" → "req" | "done"
 let GBSTATE = {};                                    // 기타 인원 몫 수령 확인 → memberId → true
 const tkey = (f, t) => f + ">" + t;
@@ -884,17 +888,28 @@ function settle(){
 
   const inScope = items.filter(i => i.split);
   const excluded = items.filter(i => !i.split);
-  const pending  = inScope.filter(i => !i.payer);
-  const noTarget = inScope.filter(i => i.payer && !(i.shared.members.length + i.shared.guests));
-  const billed   = inScope.filter(i => i.payer && (i.shared.members.length + i.shared.guests));
+
+  /* 이미 주고받은 건은 여기서 한 번 걷어낸다. 아래 세 목록은 "아직 남은 것"만 본다. */
+  const settledItems = inScope.filter(i => i.settled);
+  const live         = inScope.filter(i => !i.settled);
+
+  const pending  = live.filter(i => !i.payer);
+  const noTarget = live.filter(i => i.payer && !(i.shared.members.length + i.shared.guests));
+  const billed   = live.filter(i => i.payer && (i.shared.members.length + i.shared.guests));
 
   const spent = Object.fromEntries(EVERY.map(id => [id, 0]));      // 실제로 낸 돈
   const paid  = Object.fromEntries(EVERY.map(id => [id, 0]));      // 정산에 반영된 낸 돈
   const owed  = Object.fromEntries(EVERY.map(id => [id, 0]));      // 낼 돈
   const guestBack = Object.fromEntries(EVERY.map(id => [id, 0]));  // 모임 밖 인원에게 직접 받을 돈
-  let total = 0, guestTotal = 0;
+  const settledPaid = Object.fromEntries(EVERY.map(id => [id, 0]));  // 그 중 이미 끝난 몫
+  let total = 0, guestTotal = 0, settledTotal = 0;
 
+  /* 실제 결제액에는 이미 정산한 건도 들어간다 — 그 사람이 실제로 카드를 긁은 돈이다 */
   for (const i of inScope) if (i.payer) spent[i.payer] += i.krw;
+  for (const i of settledItems){
+    settledTotal += i.krw;
+    if (i.payer) settledPaid[i.payer] += i.krw;
+  }
 
   for (const i of billed){
     const parts = i.shared.members.length + i.shared.guests;
@@ -909,7 +924,8 @@ function settle(){
     guestTotal += guestCut;
   }
 
-  const balance = MEMBERS.map(m => ({...m, spent:spent[m.id], paid:paid[m.id], owed:owed[m.id], net:paid[m.id] - owed[m.id]}));
+  const balance = MEMBERS.map(m => ({...m, spent:spent[m.id], paid:paid[m.id], settled:settledPaid[m.id],
+                                     owed:owed[m.id], net:paid[m.id] - owed[m.id]}));
   const cred = balance.filter(b => b.net > 0).map(b => ({...b})).sort((a,b) => b.net - a.net);
   const debt = balance.filter(b => b.net < 0).map(b => ({...b, net:-b.net})).sort((a,b) => b.net - a.net);
 
@@ -930,7 +946,8 @@ function settle(){
   const totalSteps = transfers.length + collectors.length;
 
   const fxItems = inScope.filter(i => i.cur !== "KRW");
-  return {items, inScope, excluded, billed, pending, noTarget, total, guestTotal, guestBack,
+  return {items, inScope, excluded, settledItems, settledTotal, billed, pending, noTarget,
+          total, guestTotal, guestBack,
           balance, transfers, collectors, closed, doneCount, totalSteps, fxItems, spent, owed};
 }
 
@@ -1000,9 +1017,11 @@ function renderPlan(){
   const d = DAYS.find(x => x.n === curDay);
   const sum = d.items.reduce((s,i) => s + krwOf(i), 0);
   const off = d.items.filter(i => !i.split).length;
+  const done = d.items.filter(i => i.split && i.settled).length;
   el("dayTitle").textContent = `DAY ${d.n} · ${d.label}`;
   el("daySub").textContent = `${d.date} (${d.dow}) · 일정 ${d.items.length}개 · ${won(sum)}`
-    + (off ? ` · 정산 제외 ${off}건` : "");
+    + (off ? ` · 정산 제외 ${off}건` : "")
+    + (done ? ` · 정산 완료 ${done}건` : "");
 
   /* 숙소는 하루에 2개일 수 있다 — 체크아웃하는 곳과 체크인하는 곳이 겹치는 날 */
   const stays = staysOn(d.date);
@@ -1033,7 +1052,7 @@ function renderPlan(){
           </span>
           <span class="rt">
             ${i.split
-              ? `<span class="amt">${won(krw)}</span>
+              ? `<span class="amt">${won(krw)}${i.settled ? ` <span class="badge ok">정산 완료</span>` : ""}</span>
                  ${i.cur !== "KRW" ? `<span class="fx">${money(i.cost, i.cur)} · ${i.date || d.date} 환율</span>` : ""}`
               : `<span class="amt free">정산 제외</span>`}
             ${i.split ? (i.payer
@@ -1084,6 +1103,7 @@ function renderSettle(){
               : i.payer ? `<span class="pay" style="display:flex;align-items:center;gap:5px;font-size:12px">${avatar(M[i.payer])}${M[i.payer].name}</span>`
                         : `<span style="color:var(--warn);font-size:12px;font-weight:600">미지정</span>`}</span>
       <span class="am">${i.split ? won(i.krw) : `<span style="color:var(--ink-3);font-weight:500">정산 제외</span>`}
+        ${i.split && i.settled ? `<small style="color:var(--ok);font-weight:600">정산 완료 · 계산에서 빠짐</small>` : ""}
         ${i.split && i.cur !== "KRW" ? `<small>${money(i.cost, i.cur)} · ${i.date}</small>` : ""}</span>
     </button>`).join("");
   el("ledgerTotal").textContent = won(s.total);
@@ -1118,7 +1138,12 @@ function renderSettle(){
       </div>`).join("") : "")
     + `<div class="tip" style="margin-top:14px"><svg class="ic" style="width:15px;height:15px;flex:none"><use href="#i-bulb"/></svg>
        <span><b>실제 결제액</b>은 그 사람이 실제로 낸 돈이고, <b>정산 반영액</b>은 계산에 들어간 금액입니다.
-       1인 몫을 원 단위로 반올림하면서 남는 1~2원은 결제자가 부담하기 때문에 둘이 조금 다를 수 있습니다.</span></div>`
+       1인 몫을 원 단위로 반올림하면서 남는 1~2원은 결제자가 부담하고, <b>이미 정산한 항목</b>은 금액이 남은 채로
+       계산에서만 빠지기 때문에 둘이 다를 수 있습니다.</span></div>`
+    + (s.settledItems.length ? `<div class="tip" style="margin-top:8px;background:var(--ok-bg)"><svg class="ic" style="width:15px;height:15px;flex:none"><use href="#i-check"/></svg>
+       <span><b>이미 정산함 ${s.settledItems.length}건 ${won(s.settledTotal)}</b> (${s.settledItems.map(i => i.title).join(", ")}) —
+       현장에서 이미 주고받은 항목입니다. 금액은 장부에 그대로 남아 있고 정산 계산과 이체 목록에서만 빠져 있습니다.
+       <b>정산 제외와 다릅니다</b> — 정산 제외는 금액 자체가 없습니다.</span></div>` : "")
     + (s.guestTotal ? `<div class="tip warn" style="margin-top:8px"><svg class="ic" style="width:15px;height:15px;flex:none"><use href="#i-share"/></svg>
        <span>모임 밖 인원 몫 ${won(s.guestTotal)}은 정산에서 빠졌습니다. 앱이 청구할 대상이 없으므로 결제자가 직접 받고, 받으면 위에서 확인을 눌러 주세요.</span></div>` : "")
     + (s.pending.length ? `<div class="tip warn" style="margin-top:8px"><svg class="ic" style="width:15px;height:15px;flex:none"><use href="#i-clock"/></svg>
@@ -1277,7 +1302,7 @@ function expenseModal(itemId){
   draft = found
     ? {...found.item, shared:{members:[...found.item.shared.members], guests:found.item.shared.guests},
        day:found.day.n, editing:itemId}
-    : {id:null, time:"12:00", cat:"food", title:"", meta:"", split:false, cost:0, cur:GROUP.cur, rate:1,
+    : {id:null, time:"12:00", cat:"food", title:"", meta:"", split:false, settled:false, cost:0, cur:GROUP.cur, rate:1,
        payer:ME, shared:S(), booked:false, checkIn:null, checkOut:null, thumb:null, day:curDay, editing:null};
   drawExpense();
 }
@@ -1361,6 +1386,12 @@ function drawExpense(){
           ${d.shared.guests ? `<br><span class="warn">기타 ${d.shared.guests}명 몫 ${won(guestCut)}은 정산에서 빠집니다 — 결제자가 직접 받으세요.</span>` : ""}
           ${parts && krw - guestCut - memberCut !== 0 ? `<br>반올림하고 남는 ${won(Math.abs(krw - guestCut - memberCut))}은 결제자가 부담합니다.` : ""}</p>
       </div>
+
+      <!-- 이미 주고받은 건. 정산 토글을 끄는 것(금액을 실제로 지운다)과 다르다. -->
+      <label class="chk"><input type="checkbox" id="fSettled" data-f="settled" ${d.settled ? "checked" : ""}>이 지출은 이미 정산했습니다</label>
+      <p class="hint">${d.settled
+        ? `금액은 <b>장부에 그대로 남고</b> 정산 계산에서만 빠집니다. 이체 목록에도 나타나지 않습니다. 정산 토글을 끄는 것과 다릅니다 — 끄면 금액 자체가 지워집니다.`
+        : `현장에서 그 자리에 나눠 냈다면 켜 주세요. 금액은 남고 이 항목만 정산 계산에서 빠집니다.`}</p>
       ` : ""}
 
       <div class="field"><label for="fMeta">메모</label>
@@ -1394,7 +1425,8 @@ function detailModal(itemId){
         <dt>시간</dt><dd>${i.time}</dd>
         <dt>분류</dt><dd><span class="catlabel" style="background:${c.bg};color:${c.c};padding:2px 8px;border-radius:5px;font-size:11px;font-weight:600">${c.label}</span></dd>
         ${i.cat === "stay" && i.checkIn ? `<dt>숙박</dt><dd>${i.checkIn} → ${i.checkOut} · ${nightsOf(i)}박</dd>` : ""}
-        <dt>정산</dt><dd>${i.split ? `<span class="badge ok">포함</span>` : `<span class="badge mute">제외 — 일정만</span>`}</dd>
+        <dt>정산</dt><dd>${!i.split ? `<span class="badge mute">제외 — 일정만</span>`
+          : i.settled ? `<span class="badge ok">정산 완료 — 이미 주고받음</span>` : `<span class="badge ok">포함</span>`}</dd>
         ${i.split ? `
         <dt>금액</dt><dd>${won(krw)}${i.cur !== "KRW" ? ` <span style="color:var(--ink-3);font-weight:400">(${money(i.cost, i.cur)} · ${dy.date} 환율 ${i.rate.toLocaleString("ko-KR")})</span>` : ""}</dd>
         <dt>결제자</dt><dd>${i.payer ? M[i.payer].name : `<span style="color:var(--warn);font-weight:600">미지정</span>`}</dd>
@@ -1695,11 +1727,11 @@ function saveDraft(){
   /* 정산 토글이 꺼져 있으면 금액·결제자·대상을 아예 저장하지 않는다 */
   const payload = d.split
     ? {time:d.time, cat:d.cat, title:d.title.trim(), meta:d.meta, booked:!!d.booked,
-       split:true, cost:Number(d.cost) || 0, cur:d.cur, rate:d.rate,
+       split:true, settled:!!d.settled, cost:Number(d.cost) || 0, cur:d.cur, rate:d.rate,
        payer:d.payer || null, shared:d.shared,
        checkIn:d.cat === "stay" ? d.checkIn : null, checkOut:d.cat === "stay" ? d.checkOut : null}
     : {time:d.time, cat:d.cat, title:d.title.trim(), meta:d.meta, booked:!!d.booked,
-       split:false, cost:0, cur:GROUP.cur, rate:1, payer:null, shared:{members:[],guests:0},
+       split:false, settled:false, cost:0, cur:GROUP.cur, rate:1, payer:null, shared:{members:[],guests:0},
        checkIn:d.cat === "stay" ? d.checkIn : null, checkOut:d.cat === "stay" ? d.checkOut : null};
 
   if (d.editing){
@@ -1803,7 +1835,7 @@ document.addEventListener("input", e => {
   const f = e.target.closest("[data-f]");
   if (f && draft){
     const k = f.dataset.f;
-    draft[k] = k === "cost" || k === "day" ? Number(f.value) : k === "booked" ? f.checked : f.value;
+    draft[k] = k === "cost" || k === "day" ? Number(f.value) : (k === "booked" || k === "settled") ? f.checked : f.value;
     if (k === "cost"){ const pos = f.selectionStart; drawExpense();
       const nf = document.querySelector(`[data-f="cost"]`); if (nf && nf.setSelectionRange){ nf.focus(); try{ nf.setSelectionRange(pos,pos); }catch(_){} } }
     return;
@@ -1826,7 +1858,8 @@ document.addEventListener("change", e => {
   const f = e.target.closest("[data-f]");
   if (f && draft){
     const k = f.dataset.f;
-    draft[k] = k === "cost" || k === "day" ? Number(f.value) : k === "booked" ? f.checked : f.value;
+    draft[k] = k === "cost" || k === "day" ? Number(f.value) : (k === "booked" || k === "settled") ? f.checked : f.value;
+    if (k === "settled") return drawExpense();
     if (k === "cat" || k === "payer" || k === "cur" || k === "day" || k === "checkIn" || k === "checkOut"){
       if (k === "cat" && f.value === "stay" && !draft.checkIn){
         const dd = DAYS.find(x => x.n === draft.day) || DAYS[0];

@@ -75,17 +75,24 @@
   "checkInTime": "15:00",   // cat==="stay" 전용 — 시각. 날짜와 별개 컬럼이다
   "checkOutTime": "11:00",
 
-  "split": true,            // ← 이게 false 면 아래 넷을 서버가 강제로 비운다
+  "split": true,            // ← 이게 false 면 아래 다섯을 서버가 강제로 비운다
   "cost": 316000,
   "cur": "KRW",
   "payerId": "uuid|null",   // 사전 배정하지 않는다
-  "shared": { "members": ["uuid"], "guests": 0 }
+  "shared": { "members": ["uuid"], "guests": 0 },
+  "settled": false          // 이미 주고받은 건. 금액은 남기고 계산에서만 뺀다
 }
 ```
 
 - `rate` 는 **클라이언트가 보내지 않는다.** 서버가 그 항목 일자의 마감 환율을 스냅샷해 저장한다.
   **시각만 고쳐서는 환율이 다시 잡히지 않는다** — 이미 굳은 환산액이 흔들리면 안 된다.
-- `split:false` 로 저장하면 `cost:0, cur:그룹기본, rate:1, payerId:null, shared:{[],0}` 으로 확정된다.
+- `split:false` 로 저장하면 `cost:0, cur:그룹기본, rate:1, payerId:null, shared:{[],0}, settled:false` 로 확정된다.
+- **`settled` 는 `split:false` 와 다르다.** 정산 제외는 금액 자체를 지우고, `settled` 는
+  **금액·결제자·대상을 그대로 둔 채 계산에서만 뺀다.** 현장에서 그 자리에 나눠 낸 지출용이다.
+  `settled:true` 인 항목은 `pending`(결제자 미지정)·`noTarget`(대상 없음)으로도 세지 않는다 —
+  이미 끝난 건이 마감을 막으면 안 되기 때문이다. 실제 결제액(`spent`)에는 남고
+  정산 반영액(`paid`)에는 들어가지 않으며, 그 차이는 `balance[].settled` 로 따로 내려간다.
+  켜고 끄는 것은 항목 PATCH 하나다: `PATCH /api/groups/:gid/items/:iid {"settled":true}`.
 - `cat !== "stay"` 로 저장하면 `checkInTime`/`checkOutTime` 은 **400 없이 조용히 `""`** 가 된다.
   카테고리를 바꿨을 때 옛 값이 유령처럼 남는 걸 없애는 것이고, `split` 토글과 같은 처리다.
   다만 **형식이 틀린 값은 카테고리와 무관하게 400** 이다 — 오타를 삼키면 저장됐다고 믿게 된다.
@@ -101,6 +108,7 @@
   "nextDay": false,                      // endTime < time → 익일. 화면이 +1일 배지를 붙인다
   "duration": 90,                        // 분. 한쪽이라도 비면 null ("모른다"와 0분은 다르다)
   "split","cost","cur","rate","krw",     // krw = round(cost*rate). split=false 면 0
+  "settled": false,                      // 이미 정산함 — krw 는 그대로 남는다
   "payerId","shared":{"members":[],"guests":0}
 }
 ```
@@ -133,17 +141,20 @@
 
 ```jsonc
 {
-  "total": 1658570,          // 정산 대상 지출 (정산 반영액 합)
+  "total": 1658570,          // 정산 대상 지출 (정산 반영액 합). 이미 정산한 건은 빠져 있다
   "guestTotal": 51428,       // 기타 인원 몫
+  "settledTotal": 0,         // 이미 주고받아 계산에서 뺀 금액. total 에 들어 있지 않다
   "myOwed": 415214,          // 로그인한 사람의 낼 돈. "1인당 평균"을 쓰지 않는다
   "closed": false,
   "doneCount": 0, "totalSteps": 5,
-  "balance": [{ "id","name","left","spent","paid","owed","net" }],
+  // settled = 이 사람이 결제자인 "이미 정산함" 항목의 합. spent 에는 있고 paid 에는 없다
+  "balance": [{ "id","name","left","spent","paid","settled","owed","net" }],
   "transfers": [{ "fromId","fromName","toId","toName","amt","state","canAct":"req"|"done"|null }],
   "collectors": [{ "id","name","amt","received","canAct":boolean }],
   "pending": [Item],         // 결제자 미지정 — 따로 안내
   "noTarget": [Item],        // 정산 대상 0명 — 따로 안내
-  "excluded": [Item],        // 정산 제외 — 조용히 사라지면 안 된다
+  "excluded": [Item],        // 정산 제외 (금액 자체가 없다) — 조용히 사라지면 안 된다
+  "settledItems": [Item],    // 이미 정산함 (금액은 살아 있다) — excluded 와 합치지 않는다
   "fxItems": [Item]
 }
 ```

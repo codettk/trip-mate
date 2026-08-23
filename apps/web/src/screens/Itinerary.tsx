@@ -66,6 +66,8 @@ export function ItineraryScreen() {
 
   const waiting = (s?.pending.length ?? 0) + (s?.noTarget.length ?? 0);
   const excludedCount = allItems.filter((i) => !i.split).length;
+  // 이미 주고받은 건. 금액은 살아 있지만 "정산 대상 지출"에는 들어가지 않는다.
+  const settledCount = allItems.filter((i) => i.split && i.settled).length;
   /** 결제액 막대의 기준선. 0으로 나누지 않도록 최소 1. */
   const maxSpent = Math.max(...(s?.balance ?? []).map((b) => b.spent), 1);
 
@@ -82,8 +84,13 @@ export function ItineraryScreen() {
           label="정산 대상 지출"
           value={formatWon(s?.total ?? 0)}
           sub={
-            excludedCount
-              ? `정산 제외 ${excludedCount}건은 뺀 금액`
+            excludedCount || settledCount
+              ? `${[
+                  excludedCount ? `정산 제외 ${excludedCount}건` : "",
+                  settledCount ? `정산 완료 ${settledCount}건` : "",
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}은 뺀 금액`
               : "모든 일정이 정산에 들어갑니다"
           }
         />
@@ -317,6 +324,7 @@ function DayPane({
 }) {
   const sum = day.items.reduce((acc, i) => acc + i.krw, 0);
   const off = day.items.filter((i) => !i.split).length;
+  const settled = day.items.filter((i) => i.split && i.settled).length;
 
   return (
     <>
@@ -328,6 +336,7 @@ function DayPane({
         <span className="sub">
           {shortDate(day.date)} ({day.dow}) · 일정 {day.items.length}개 · {formatWon(sum)}
           {off ? ` · 정산 제외 ${off}건` : ""}
+          {settled ? ` · 정산 완료 ${settled}건` : ""}
         </span>
         <div className="end">
           <button className="btn btn-soft btn-sm" onClick={onAdd}>
@@ -496,7 +505,15 @@ function ItemStop({
           <span className="rt">
             {item.split ? (
               <>
-                <span className="amt">{formatWon(item.krw)}</span>
+                <span className="amt">
+                  {formatWon(item.krw)}
+                  {/* 이미 정산한 건은 금액이 살아 있으므로, 왜 정산에 안 잡히는지 여기서 말한다 */}
+                  {item.settled ? (
+                    <span className="badge ok" style={{ marginLeft: 5 }}>
+                      정산 완료
+                    </span>
+                  ) : null}
+                </span>
                 {/* 외화는 표시용이다. 정산에 들어가는 값은 위의 원화 정수뿐이다. */}
                 {item.cur !== "KRW" ? (
                   <span className="fx">

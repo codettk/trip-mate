@@ -32,6 +32,7 @@ export const ICON_PATHS: Record<string, string> = {
   "lock": "<rect x=\"4\" y=\"10\" width=\"16\" height=\"11\" rx=\"3\"/><path d=\"M8 10V7a4 4 0 018 0v3\"/>",
   "fx": "<path d=\"M4 8h13l-3-3M20 16H7l3 3\"/>",
   "sort": "<path d=\"M4 7h16M6 12h12M9 17h6\"/>",
+  "undo": "<path d=\"M4 9h11a5 5 0 010 10h-5M4 9l4-4M4 9l4 4\"/>",
 };
 
 export type IconName = keyof typeof ICON_PATHS;

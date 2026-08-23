@@ -99,6 +99,15 @@ TripMate는 이 넷을 **하나의 여행 모임 = 하나의 작업 공간**으�
   커플이나 친구끼리 서로 내주는 일이 흔하기 때문이다.
   → 따라서 **"1인당 평균" 같은 전원 균등 가정 숫자를 화면에 쓰지 않는다.**
   아무도 실제로 부담하지 않는 금액이라 오해를 만든다. 대신 **"내 부담액"**(로그인한 사람의 `owed`)을 보여 준다.
+- **이미 주고받은 지출은 `Item.settled` 로 표시하고, 금액은 남긴 채 계산에서만 뺀다.**
+  현장에서 결제한 자리에 바로 나눠 내는 일이 흔한데, 그런 건을 정산에 남겨 두면 이체 목록이
+  영원히 안 끝나고, 정산 토글을 끄면 **얼마 썼는지가 사라진다.** 그래서 세 번째 상태를 둔다.
+  → 실제 결제액(`spent`)에는 남고 정산 반영액(`paid`)에는 안 들어간다. 그 차이는
+  `balance.settled` 로 따로 내보내 화면이 "왜 다른지"를 숫자로 말한다 — 반올림 잔돈에 섞지 않는다.
+  → **결제자 미지정·정산 대상 없음으로도 세지 않는다.** 이미 끝난 건이 마감을 막으면 안 된다.
+  → 화면에서 "정산 제외"와 **같은 목록에 합치지 않는다.** 앞은 금액이 없는 항목이고
+  뒤는 금액이 살아 있는 항목이라, 합치면 "왜 이 돈이 합계에 없지?"에 답할 수 없다.
+  경위는 `docs/decisions/2026-08-23-settled-items.md`.
 - **금액과 정산 대상은 `Item.split`(정산 포함) 토글을 켰을 때만 존재한다.**
   일정만 추가하는 경우가 많기 때문이다. 꺼져 있으면 폼에서 금액·통화·결제자·대상이 **아예 보이지 않고**,
   저장할 때 `cost:0, payer:null, shared:{[],0}`으로 확정된다. 숨겨진 금액을 남기지 않는다.
@@ -169,6 +178,7 @@ Member   { id, name, color, kakaoId, left }        # left=true → 나갔지만 
 Day      { n, date, dow, label }                   # 기간에서 자동 생성
 Item     { id, time, endTime, cat, title, meta, booked, thumb,   # endTime<time 이면 익일
            split, cost, cur, rate, payer, shared,  # split=false면 뒤 전부 비어 있음
+           settled,                                # 이미 주고받음 — 금액은 남기고 계산에서만 뺀다
            checkIn, checkOut,                      # cat==="stay" 전용 — 날짜
            checkInTime, checkOutTime }             # cat==="stay" 전용 — 시각
 Shared   { members[], guests }                     # 이 항목을 누가 나눠 내는가
@@ -194,7 +204,8 @@ Transfer { from, to, amt, state }                  # state: null | "req" | "done
 인자만 받도록 바꿔 그대로 옮겨 왔고, 서버와 브라우저가 같은 함수를 부른다.
 아래 절차는 그 코드의 설명이지 두 번째 구현의 명세가 아니다 — 어디서도 다시 쓰지 않는다.
 
-0. `split === true`인 항목만 계산에 들어간다. `krw = round(cost × rate)`
+0. `split === true` **이고 `settled === false`** 인 항목만 계산에 들어간다. `krw = round(cost × rate)`
+   (`settled`인 항목은 `krw`가 그대로 살아 있고 `spent`에도 쌓이지만, 3~6번을 통째로 건너뛴다)
 1. `parts = shared.members.length + shared.guests`, `per = round(krw / parts)`
 2. `memberTotal = per × members.length`, `guestCut = per × guests`
 3. 결제자의 "낸 돈"에는 `memberTotal`만, `guestCut`은 `guestBack[payer]`로 따로 쌓는다
@@ -205,6 +216,7 @@ Transfer { from, to, amt, state }                  # state: null | "req" | "done
 
 `krw − guestCut − memberTotal`로 남는 1~2원은 결제자가 흡수한다 (3번에서 자연히 빠진다).
 `parts === 0`인 항목과 결제자 미지정 항목은 정산에서 통째로 빠지고 **UI가 각각 따로 안내한다.**
+**단 `settled`인 항목은 그 둘로 세지 않는다** — 이미 끝난 건이라 마감을 막으면 안 된다.
 **결제자나 정산 대상을 바꾸는 순간 전체가 재계산된다 — 이게 이 앱의 핵심 상호작용이다.**
 
 검증 규칙: 잔액 합이 **정확히 0**, 이체 합이 채권 합과 일치, **모든 값이 정수**.
@@ -272,6 +284,8 @@ Transfer { from, to, amt, state }                  # state: null | "req" | "done
   `전체 선택 / 전체 해제 / 현재 폴더만 / 이 폴더와 하위 전부`를 함께 둔다.
   **몇 개 폴더의 사진 몇 장이 나가는지를 그 자리에서 계산해 보여 준다** — 고른 것과 나가는 것이 달라지면 안 된다.
 - 정산 화면은 장부 + 정산서 2단. 이체 한 줄마다 **내가 눌러야 하는 버튼만** 활성화한다.
+  빠진 항목은 **결제자 미지정 · 정산 대상 없음 · 이미 정산함 · 정산 제외** 네 목록으로 각각 안내한다.
+  "이미 정산함"에는 금액이 그대로 나오고 줄마다 **정산에 다시 넣기**가 붙는다.
 - 문서는 **일차에 묶이지 않는다.** 블록을 얹는 자유 문서이며 CRUD가 전부 필요하다.
   외부 공유 버튼을 두지 않는다.
 
@@ -295,6 +309,7 @@ docs/decisions/2026-08-19-sharing-and-times.md       공유를 묶음으로 옮�
 docs/decisions/2026-08-20-settle-confirm-amounts.md  이체·수령 확인을 금액에 묶은 이유 (마감이 안 풀리던 결함)
 docs/decisions/2026-08-22-kakao-and-drive-live.md    카카오·Drive 실연동 결과와 남은 구멍 셋 (프로젝트 분리 · 게시 URL · 드라이버 전환)
 docs/decisions/2026-08-23-upload-progress.md         업로드 진행률을 파일별로 쪼갠 이유 (fetch 에는 진행 이벤트가 없다)
+docs/decisions/2026-08-23-settled-items.md           "이미 정산함"을 정산 제외와 다른 상태로 둔 이유
 docs/design/pencil/trip-mate-prototype.pen           Pencil 디자인 — A 일정 / B 모달 / C 로그인
 .claude/agents/                 api-module · web-screen · settlement-guard · share-auditor
 CLAUDE.md                       이 문서 — 기획 정본

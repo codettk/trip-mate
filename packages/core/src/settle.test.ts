@@ -26,6 +26,7 @@ function item(p: Partial<SettleItem> & { cost?: number }): SettleItem {
     rate: 1,
     payer: null,
     shared: { members: [], guests: 0 },
+    settled: false,
     ...p,
   };
 }
@@ -284,6 +285,87 @@ describe("settle — 경계", () => {
   });
 });
 
+describe("settle — 이미 정산한 항목", () => {
+  /**
+   * settled 는 split=false(정산 제외)와 다르다.
+   *   정산 제외 → 금액 자체가 없다.
+   *   이미 정산 → 금액이 살아 있고 계산에서만 빠진다.
+   * 그 차이가 실제로 숫자에 나타나는지 본다.
+   */
+  const base = [paid(100_000, "jh", ["jh", "ms"]), paid(60_000, "ms", ["jh", "ms"])];
+
+  it("계산에서 빠지지만 실제 결제액에는 남는다", () => {
+    const before = settle({ members: MEMBERS, items: base });
+    const after = settle({
+      members: MEMBERS,
+      items: [base[0]!, item({ ...base[1]!, settled: true })],
+    });
+
+    const jhBefore = before.balance.find((b) => b.id === "jh")!;
+    const msAfter = after.balance.find((b) => b.id === "ms")!;
+
+    // 민수가 낸 60,000 은 실제 결제액에 그대로 남는다
+    expect(msAfter.spent).toBe(60_000);
+    // 그런데 정산 반영액에는 들어가지 않는다
+    expect(msAfter.paid).toBe(0);
+    // 왜 다른지 숫자로 설명할 수 있어야 한다
+    expect(msAfter.settled).toBe(60_000);
+    expect(msAfter.spent - msAfter.paid).toBe(msAfter.settled);
+
+    // 정산 대상 지출은 남은 항목만 센다
+    expect(after.total).toBe(100_000);
+    expect(after.settledTotal).toBe(60_000);
+    expect(after.settledItems).toHaveLength(1);
+    // 금액이 없는 "정산 제외"와 섞이지 않는다
+    expect(after.excluded).toHaveLength(0);
+    expect(before.total).toBe(160_000);
+    void jhBefore;
+  });
+
+  it("이체가 다시 짜이고 잔액 합은 여전히 0이다", () => {
+    const after = settle({
+      members: MEMBERS,
+      items: [base[0]!, item({ ...base[1]!, settled: true })],
+    });
+    const v = verifySettlement(after);
+    expect(v.ok).toBe(true);
+    expect(after.balance.reduce((s, b) => s + b.net, 0)).toBe(0);
+    // 100,000 을 둘이 나눴으므로 민수 → 지현 50,000 한 건만 남는다
+    expect(after.transfers).toEqual([
+      expect.objectContaining({ fromId: "ms", toId: "jh", amt: 50_000 }),
+    ]);
+  });
+
+  it("이미 정산한 항목은 결제자 미지정·대상 없음으로 세지 않는다 (마감을 막으면 안 된다)", () => {
+    const items = [
+      paid(100_000, "jh", ["jh", "ms"]),
+      item({ ...paid(50_000, null, ["jh"]), settled: true }), // 결제자 없음 + 이미 정산
+      item({ ...paid(50_000, "ms", []), settled: true }), // 대상 없음 + 이미 정산
+    ];
+    const r = settle({ members: MEMBERS, items });
+
+    expect(r.pending).toHaveLength(0);
+    expect(r.noTarget).toHaveLength(0);
+    expect(r.settledItems).toHaveLength(2);
+
+    // 남은 이체 한 건을 끝내면 마감된다
+    const t = r.transfers[0]!;
+    const closed = settle({
+      members: MEMBERS,
+      items,
+      transferStates: { [transferKey(t.fromId, t.toId)]: { state: "done", amt: t.amt } },
+    });
+    expect(closed.closed).toBe(true);
+  });
+
+  it("정산 제외(split=false)에는 settled 가 붙어도 금액이 0이라 아무 일도 없다", () => {
+    const r = settle({ members: MEMBERS, items: [item({ settled: true })] });
+    expect(r.settledItems).toHaveLength(0); // split=false 는 inScope 가 아니다
+    expect(r.excluded).toHaveLength(1);
+    expect(r.settledTotal).toBe(0);
+  });
+});
+
 describe("settle — 무작위 1000 케이스에서 불변식이 깨지지 않는다", () => {
   /** 재현 가능한 난수 (mulberry32) — 실패하면 같은 케이스를 다시 돌릴 수 있어야 한다 */
   function rng(seed: number) {
@@ -317,7 +399,17 @@ describe("settle — 무작위 1000 케이스에서 불변식이 깨지지 않�
         const cur = rand() < 0.3 ? "USD" : "KRW";
         const rate = cur === "KRW" ? 1 : 1000 + rand() * 500;
         const cost = cur === "KRW" ? Math.floor(rand() * 2_000_000) : rand() * 3000;
-        return item({ split: true, cost, cur, rate, payer, shared: { members: targets, guests } });
+        // 이미 정산한 항목이 섞여도 잔액 합은 여전히 정확히 0이어야 한다
+        const settled = rand() < 0.2;
+        return item({
+          split: true,
+          cost,
+          cur,
+          rate,
+          payer,
+          shared: { members: targets, guests },
+          settled,
+        });
       });
 
       const r = settle({ members, items });

@@ -4,7 +4,7 @@
  * prototype/index.html 의 settle() 을 그대로 옮긴 것이다. 다시 쓰지 않았다.
  * 달라진 것은 전역 변수를 인자로 받게 만든 것뿐이고, 계산 순서와 반올림 위치는 한 줄도 바꾸지 않았다.
  *
- *  0. split === true 인 항목만 계산에 들어간다. krw = round(cost × rate)
+ *  0. split === true 이고 settled === false 인 항목만 계산에 들어간다. krw = round(cost × rate)
  *  1. parts = shared.members.length + shared.guests,  per = round(krw / parts)
  *  2. memberTotal = per × members.length,  guestCut = per × guests
  *  3. 결제자의 "낸 돈"에는 memberTotal 만, guestCut 은 guestBack[payer] 로 따로 쌓는다
@@ -15,6 +15,13 @@
  *
  * krw − guestCut − memberTotal 로 남는 1~2원은 결제자가 흡수한다 (3번에서 자연히 빠진다).
  * parts === 0 인 항목과 결제자 미지정 항목은 정산에서 통째로 빠지고 UI 가 각각 따로 안내한다.
+ *
+ * **settled(이미 정산함)는 split=false(정산 제외)와 다르다.**
+ *   split=false → 금액 자체가 없다 (cost 0, payer null, 대상 없음).
+ *   settled     → 금액·결제자·대상이 그대로 있고 **계산에서만** 빠진다. 현장에서 이미 주고받은 건이다.
+ *   그래서 실제 결제액(spent)에는 남고 정산 반영액(paid)에는 들어가지 않는다 —
+ *   그 차이는 balance.settled 로 따로 내보내 화면이 "왜 다른지"를 숫자로 설명할 수 있게 한다.
+ *   이미 끝난 건이므로 결제자 미지정·대상 없음으로도 세지 않는다. 마감을 막으면 안 된다.
  *
  * ⚠ 이 파일을 고치면 잔액 합 0 · 이체 합 일치 · 전부 정수 세 가지를 반드시 검증한다.
  *    settle.test.ts 가 랜덤 케이스로 그 셋을 돌린다.
@@ -46,11 +53,16 @@ export function settle(input: SettleInput): SettleResult {
 
   const inScope = items.filter((i) => i.split);
   const excluded = items.filter((i) => !i.split);
-  const pending = inScope.filter((i) => !i.payer);
-  const noTarget = inScope.filter(
+
+  // 이미 주고받은 건은 여기서 한 번 걷어낸다. 아래 세 목록은 전부 "아직 남은 것"만 본다.
+  const settledItems = inScope.filter((i) => i.settled);
+  const live = inScope.filter((i) => !i.settled);
+
+  const pending = live.filter((i) => !i.payer);
+  const noTarget = live.filter(
     (i) => i.payer && !(i.shared.members.length + i.shared.guests),
   );
-  const billed = inScope.filter(
+  const billed = live.filter(
     (i) => i.payer && i.shared.members.length + i.shared.guests > 0,
   );
 
@@ -61,11 +73,18 @@ export function settle(input: SettleInput): SettleResult {
   const paid = zero(); // 정산에 반영된 낸 돈
   const owed = zero(); // 낼 돈
   const guestBack = zero(); // 모임 밖 인원에게 직접 받을 돈
+  const settledPaid = zero(); // 그 중 이미 정산이 끝난 몫
   let total = 0;
   let guestTotal = 0;
+  let settledTotal = 0;
 
+  // 실제 결제액에는 이미 정산한 건도 들어간다 — 그 사람이 실제로 카드를 긁은 돈이기 때문이다.
   for (const i of inScope) {
     if (i.payer && i.payer in spent) spent[i.payer]! += i.krw;
+  }
+  for (const i of settledItems) {
+    settledTotal += i.krw;
+    if (i.payer && i.payer in settledPaid) settledPaid[i.payer]! += i.krw;
   }
 
   for (const i of billed) {
@@ -90,6 +109,7 @@ export function settle(input: SettleInput): SettleResult {
     left: m.left,
     spent: spent[m.id] ?? 0,
     paid: paid[m.id] ?? 0,
+    settled: settledPaid[m.id] ?? 0,
     owed: owed[m.id] ?? 0,
     net: (paid[m.id] ?? 0) - (owed[m.id] ?? 0),
   }));
@@ -143,6 +163,7 @@ export function settle(input: SettleInput): SettleResult {
     collectors.filter((c) => c.received).length;
   const totalSteps = transfers.length + collectors.length;
 
+  // 환율 안내는 금액이 있는 항목 전부에 해당한다 — 이미 정산한 건도 환산액으로 적혀 있다.
   const fxItems = inScope.filter((i) => i.cur !== "KRW");
 
   void byId; // 이름 조회는 members 순회로 충분하다. 남겨두면 오해를 만든다.
@@ -151,6 +172,8 @@ export function settle(input: SettleInput): SettleResult {
     items,
     inScope,
     excluded,
+    settledItems,
+    settledTotal,
     billed,
     pending,
     noTarget,
@@ -203,9 +226,11 @@ export function verifySettlement(r: SettleResult): SettleInvariants {
   const nums: Array<[string, number]> = [
     ["total", r.total],
     ["guestTotal", r.guestTotal],
+    ["settledTotal", r.settledTotal],
     ...r.balance.flatMap((b): Array<[string, number]> => [
       [`balance[${b.id}].spent`, b.spent],
       [`balance[${b.id}].paid`, b.paid],
+      [`balance[${b.id}].settled`, b.settled],
       [`balance[${b.id}].owed`, b.owed],
       [`balance[${b.id}].net`, b.net],
     ]),
