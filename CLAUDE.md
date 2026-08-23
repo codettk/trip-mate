@@ -263,6 +263,10 @@ Transfer { from, to, amt, state }                  # state: null | "req" | "done
 - 결제자 미지정은 노란 배지로 표시하고, 카드를 누르면 그 자리에서 지정할 수 있어야 한다.
 - 사진 화면은 앨범 목록이 아니라 **폴더 탐색기**다. 트리 + 브레드크럼 + 폴더 카드 + 그리드.
   정렬 셀렉트(업로드순/촬영순)를 툴바에 두고, 촬영 정보가 없어 대체된 항목은 배지로 알린다.
+  **업로드는 파일 하나에 요청 하나로 보내고, 파일마다 몇 % · 전체 중 몇 개가 끝났는지 함께 보여 준다.**
+  퍼센트는 **브라우저 → 서버** 구간이므로 100% 를 완료라고 쓰지 않는다 — 그 뒤 서버가 Drive 에
+  저장하는 구간은 "저장 중"으로 따로 말한다. 전체 막대는 개수가 아니라 **바이트 기준**이다
+  (동영상 하나와 사진 하나를 같은 무게로 치면 막대가 몇 분씩 멈춘다).
   사진은 **여러 장 골라 다른 폴더로 옮길 수 있고**, 폴더 자체도 다른 폴더 밑으로 옮길 수 있다.
 - 공유는 **모달 하나**에서 끝낸다. 폴더 트리에 체크박스를 놓고
   `전체 선택 / 전체 해제 / 현재 폴더만 / 이 폴더와 하위 전부`를 함께 둔다.
@@ -290,6 +294,7 @@ docs/decisions/2026-08-17-implementation-choices.md  구현 스택 판단과 아
 docs/decisions/2026-08-19-sharing-and-times.md       공유를 묶음으로 옮긴 이유와 종료 시각 (확정 규칙 2개 변경)
 docs/decisions/2026-08-20-settle-confirm-amounts.md  이체·수령 확인을 금액에 묶은 이유 (마감이 안 풀리던 결함)
 docs/decisions/2026-08-22-kakao-and-drive-live.md    카카오·Drive 실연동 결과와 남은 구멍 셋 (프로젝트 분리 · 게시 URL · 드라이버 전환)
+docs/decisions/2026-08-23-upload-progress.md         업로드 진행률을 파일별로 쪼갠 이유 (fetch 에는 진행 이벤트가 없다)
 docs/design/pencil/trip-mate-prototype.pen           Pencil 디자인 — A 일정 / B 모달 / C 로그인
 .claude/agents/                 api-module · web-screen · settlement-guard · share-auditor
 CLAUDE.md                       이 문서 — 기획 정본

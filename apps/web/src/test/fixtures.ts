@@ -26,6 +26,7 @@ import type {
   Itinerary,
   Me,
   Member,
+  Photo,
   Settlement,
   ShareEntryDto,
   ShareList,
@@ -369,6 +370,34 @@ export function folderView(id: string): FolderView {
       photoCount: c.photoCount,
     })),
     photos: [],
+  };
+}
+
+/**
+ * 업로드 응답. 파일 하나에 요청 하나이므로 보통 한 장씩 돌아온다.
+ * 일부만 실패할 수 있으므로 모양은 항상 `{ uploaded, failed }` 다.
+ */
+export function uploadResult(body: unknown, folderId: string): {
+  uploaded: Photo[];
+  failed: Array<{ name: string; reason: string }>;
+} {
+  const files =
+    typeof FormData !== "undefined" && body instanceof FormData
+      ? body.getAll("files").filter((v): v is File => v instanceof File)
+      : [];
+  return {
+    uploaded: files.map((f, i) => ({
+      id: `p-new-${i}`,
+      name: f.name,
+      mime: f.type || "image/jpeg",
+      size: f.size,
+      folderId,
+      uploadedAt: "2026-09-12T10:00:00.000Z",
+      takenAt: null,
+      takenFallback: true,
+      url: `/api/media/p-new-${i}`,
+    })),
+    failed: [],
   };
 }
 

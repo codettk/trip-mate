@@ -10,7 +10,13 @@ import type { ReactElement, ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { App } from "../App.tsx";
 import * as F from "./fixtures.ts";
-import { installFakeApi, type Ctx, type FakeApi, type RouteMap } from "./server.ts";
+import {
+  installFakeApi,
+  type Ctx,
+  type FakeApi,
+  type FakeApiOptions,
+  type RouteMap,
+} from "./server.ts";
 
 /** 테스트용 QueryClient — 재시도도 캐시 보존도 하지 않는다. */
 export function testQueryClient(): QueryClient {
@@ -34,6 +40,9 @@ export function defaultRoutes(overrides: RouteMap = {}): RouteMap {
     "GET /api/groups/:gid/settlement/share": F.settleShare,
     "GET /api/groups/:gid/folders": { root: F.folderRoot },
     "GET /api/groups/:gid/folders/:fid": ({ params }: Ctx) => F.folderView(params.fid ?? "f-root"),
+    // 업로드는 XHR 로 나간다 (fetch 에는 진행 이벤트가 없다). 표는 같은 것을 쓴다.
+    "POST /api/groups/:gid/folders/:fid/photos": ({ params, body }: Ctx) =>
+      F.uploadResult(body, params.fid ?? "f-root"),
     "GET /api/groups/:gid/shares": F.shareList,
     "GET /api/groups/:gid/docs": { docs: [F.docSummary] },
     "GET /api/groups/:gid/docs/:did": F.docDetail,
@@ -65,8 +74,12 @@ function Providers({ client, route, children }: { client: QueryClient; route: st
 }
 
 /** 앱 전체를 라우트 하나로 띄운다. 실제 라우팅을 그대로 지난다. */
-export function renderApp(route: string, overrides: RouteMap = {}): Harness {
-  const api = installFakeApi(defaultRoutes(overrides));
+export function renderApp(
+  route: string,
+  overrides: RouteMap = {},
+  opts: FakeApiOptions = {},
+): Harness {
+  const api = installFakeApi(defaultRoutes(overrides), opts);
   const client = testQueryClient();
   const result = render(
     <Providers client={client} route={route}>
@@ -77,8 +90,13 @@ export function renderApp(route: string, overrides: RouteMap = {}): Harness {
 }
 
 /** 컴포넌트 하나만 띄운다 (모달 등). */
-export function renderUi(ui: ReactElement, route = `/g/${F.GID}`, overrides: RouteMap = {}): Harness {
-  const api = installFakeApi(defaultRoutes(overrides));
+export function renderUi(
+  ui: ReactElement,
+  route = `/g/${F.GID}`,
+  overrides: RouteMap = {},
+  opts: FakeApiOptions = {},
+): Harness {
+  const api = installFakeApi(defaultRoutes(overrides), opts);
   const client = testQueryClient();
   const result = render(
     <Providers client={client} route={route}>

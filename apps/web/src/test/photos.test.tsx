@@ -11,19 +11,46 @@
  *  · 새 폴더는 목록 위 인라인 입력이다 (폼 페이지도 모달도 아니다)
  *  · 중지·주소 재발급 확인은 브라우저 confirm 이 아니라 모달이다
  *  · 정렬은 업로드순이 기본이고 촬영순을 고를 수 있다
+ *  · 업로드는 **파일 하나에 요청 하나**이고, 파일마다 몇 % · 전체 중 몇 개인지 화면이 말한다
  */
 
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import * as F from "./fixtures.ts";
 import { actionLabels, renderApp, visibleText } from "./harness.tsx";
+import type { FakeApiOptions } from "./server.ts";
 import { clipboardWrites } from "./setup.ts";
 
-async function openPhotos(path = "") {
-  const h = renderApp(`/g/${F.GID}/photos${path}`);
+async function openPhotos(path = "", opts: FakeApiOptions = {}) {
+  const h = renderApp(`/g/${F.GID}/photos${path}`, {}, opts);
   await screen.findByText("폴더", { selector: "h3" });
   return h;
 }
+
+/** 크기를 정한 가짜 파일. 진행률은 바이트 기준이라 크기가 의미를 갖는다. */
+const file = (name: string, size: number): File =>
+  new File([new Uint8Array(size)], name, { type: name.endsWith(".mp4") ? "video/mp4" : "image/jpeg" });
+
+/** 파일 고르기. 숨은 input 에 직접 넣는다 — 실제 사용자는 여기에 끌어다 놓는다. */
+function dropFiles(container: HTMLElement, files: File[]): void {
+  const input = container.querySelector<HTMLInputElement>('input[type="file"]')!;
+  fireEvent.change(input, { target: { files } });
+}
+
+const uploadCalls = (api: { calls: Array<{ method: string; path: string }> }) =>
+  api.calls.filter((c) => c.method === "POST" && c.path.endsWith("/photos"));
+
+/** 파일 이름이 적힌 진행 줄. */
+function rowOf(name: string): HTMLElement {
+  const row = Array.from(document.querySelectorAll<HTMLElement>(".uprow")).find((r) =>
+    r.querySelector(".nm")?.textContent?.includes(name),
+  );
+  if (!row) throw new Error(`"${name}" 줄이 없다`);
+  return row;
+}
+
+/** 전체 진행 막대. */
+const overall = (): HTMLElement => document.querySelector<HTMLElement>('.uplist [role="progressbar"]')!;
 
 describe("사진 화면", () => {
   it("에러 없이 마운트되고 트리·브레드크럼·폴더 카드·그리드가 모두 있다", async () => {
@@ -165,6 +192,61 @@ describe("사진 화면", () => {
     expect(visibleText()).toContain("앱이 촬영 시각으로 자동 분류해 다른 폴더로 옮기지 않습니다");
     const drop = document.querySelector(".drop .pth")!;
     expect(drop.textContent).toContain("Day 2 · 우도");
+  });
+
+  it("업로드는 파일 하나에 요청 하나로 나간다 (진행률을 파일별로 말하려면 이 방법뿐이다)", async () => {
+    const { container, api } = await openPhotos();
+    dropFiles(container, [file("a.jpg", 10), file("b.jpg", 20), file("c.mp4", 30)]);
+
+    await waitFor(() => expect(uploadCalls(api).length).toBe(3));
+    expect(uploadCalls(api).map((c) => c.path)).toEqual(
+      Array(3).fill(`/api/groups/${F.GID}/folders/f-root/photos`),
+    );
+    await screen.findByText("업로드 완료 3 / 3");
+  });
+
+  it("올리는 동안 파일마다 몇 % 인지와 전체 중 몇 개가 끝났는지를 함께 보여 준다", async () => {
+    const { container, api } = await openPhotos("", { manualUploads: true });
+    // 크기를 다르게 준다 — 전체 막대가 개수가 아니라 바이트 기준이어야 큰 파일이 정직하게 보인다
+    dropFiles(container, [file("big.mp4", 300_000), file("small.jpg", 100_000)]);
+
+    // 동시에 두 개까지 보낸다
+    await waitFor(() => expect(api.uploads.length).toBe(2));
+    const [big, small] = api.uploads;
+
+    // 아직 아무것도 끝나지 않았다
+    expect(visibleText()).toContain("올리는 중 0 / 2");
+
+    // big 을 절반쯤 보낸 상태
+    await act(async () => big!.progress(Math.floor(big!.total / 2)));
+    const bigRow = rowOf("big.mp4");
+    expect(bigRow.textContent).toMatch(/\d+%/);
+    expect(bigRow.textContent).toContain("293KB"); // 파일 크기도 같이 읽힌다
+    expect(Number(overall().getAttribute("aria-valuenow"))).toBeGreaterThan(0);
+    expect(Number(overall().getAttribute("aria-valuenow"))).toBeLessThan(100);
+
+    // 다 보냈지만 서버가 Drive 에 저장 중 — 100% 를 완료라고 쓰지 않는다
+    await act(async () => big!.progress(big!.total));
+    expect(rowOf("big.mp4").textContent).toContain("저장 중");
+    expect(visibleText()).toContain("올리는 중 0 / 2");
+
+    await act(async () => big!.finish());
+    expect(rowOf("big.mp4").textContent).toContain("완료");
+    expect(visibleText()).toContain("올리는 중 1 / 2");
+
+    // 남은 하나는 서버가 거부한다 — 전체 실패로 만들지 않고 그 줄에만 이유를 적는다
+    await act(async () =>
+      small!.finish({
+        uploaded: [],
+        failed: [{ name: "small.jpg", reason: "지원하지 않는 형식입니다 (text/plain)" }],
+      }),
+    );
+
+    await screen.findByText("일부만 올라갔습니다 1 / 2");
+    expect(rowOf("small.jpg").textContent).toContain("지원하지 않는 형식입니다");
+    expect(visibleText()).toContain("실패 1");
+    // 100% = 완료가 아니라는 사실을 화면이 직접 말한다
+    expect(visibleText()).toContain("서버까지 보낸 양");
   });
 
   it("폴더 조회가 실패하면 흰 화면 대신 오류 상자를 보여 준다", async () => {

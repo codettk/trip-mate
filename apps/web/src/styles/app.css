@@ -386,6 +386,26 @@ svg.ic{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7;str
 .drop .pth{display:inline-flex;gap:6px;margin-top:11px;padding:6px 11px;border-radius:7px;background:var(--sunken);font-family:var(--mono);font-size:11px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .drop .pth b{color:var(--brand)}
 
+/* ── 업로드 진행 ──────────────────────────────────────────────────
+   파일마다 한 줄. 퍼센트는 브라우저 → 서버 구간이고, 그 뒤 Drive 저장은 "저장 중"으로 쓴다. */
+.uplist{border:1px solid var(--line);border-radius:var(--r-md);background:var(--surface);padding:13px 15px;margin-bottom:20px;display:grid;gap:9px}
+.uplist .hd{display:flex;align-items:center;gap:8px;font-size:12.5px}
+.uplist .hd b{font-weight:600;font-variant-numeric:tabular-nums}
+.uplist .hd .sp{flex:1}
+.uplist .hd .pc{font-variant-numeric:tabular-nums;color:var(--ink-2);font-weight:600}
+.uplist>.prog{margin-top:0}
+.uplist .hint{margin-top:2px}
+.uprow{display:grid;grid-template-columns:1fr auto;gap:3px 10px;font-size:11.5px;align-items:baseline}
+.uprow .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-2)}
+.uprow .st{font-variant-numeric:tabular-nums;color:var(--ink-3);display:flex;gap:6px;align-items:baseline}
+.uprow .st small{color:var(--ink-3);font-size:10.5px}
+.uprow .st.done{color:var(--ok);font-weight:600}
+.uprow .st.fail{color:var(--warn);font-weight:600}
+.uprow .prog{grid-column:1/-1;margin-top:0;height:4px}
+.uprow .rs{grid-column:1/-1;color:var(--warn);font-size:11px}
+.prog i.on{background:var(--brand)}
+.prog i.bad{background:var(--warn)}
+
 .seclabel{font-size:11.5px;font-weight:700;color:var(--ink-2);margin:20px 0 10px;display:flex;align-items:center;gap:8px}
 .seclabel:first-child{margin-top:0}
 .seclabel .sub{font-weight:400;color:var(--ink-3)}

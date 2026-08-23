@@ -344,6 +344,26 @@ svg.ic{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7;str
 .drop .pth{display:inline-flex;gap:6px;margin-top:11px;padding:6px 11px;border-radius:7px;background:var(--sunken);font-family:var(--mono);font-size:11px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .drop .pth b{color:var(--brand)}
 
+/* ── 업로드 진행 ──────────────────────────────────────────────────
+   파일마다 한 줄. 퍼센트는 브라우저 → 서버 구간이고, 그 뒤 Drive 저장은 "저장 중"으로 쓴다. */
+.uplist{border:1px solid var(--line);border-radius:var(--r-md);background:var(--surface);padding:13px 15px;margin-bottom:20px;display:grid;gap:9px}
+.uplist .hd{display:flex;align-items:center;gap:8px;font-size:12.5px}
+.uplist .hd b{font-weight:600;font-variant-numeric:tabular-nums}
+.uplist .hd .sp{flex:1}
+.uplist .hd .pc{font-variant-numeric:tabular-nums;color:var(--ink-2);font-weight:600}
+.uplist>.prog{margin-top:0}
+.uplist .hint{margin-top:2px}
+.uprow{display:grid;grid-template-columns:1fr auto;gap:3px 10px;font-size:11.5px;align-items:baseline}
+.uprow .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-2)}
+.uprow .st{font-variant-numeric:tabular-nums;color:var(--ink-3);display:flex;gap:6px;align-items:baseline}
+.uprow .st small{color:var(--ink-3);font-size:10.5px}
+.uprow .st.done{color:var(--ok);font-weight:600}
+.uprow .st.fail{color:var(--warn);font-weight:600}
+.uprow .prog{grid-column:1/-1;margin-top:0;height:4px}
+.uprow .rs{grid-column:1/-1;color:var(--warn);font-size:11px}
+.prog i.on{background:var(--brand)}
+.prog i.bad{background:var(--warn)}
+
 .seclabel{font-size:11.5px;font-weight:700;color:var(--ink-2);margin:20px 0 10px;display:flex;align-items:center;gap:8px}
 .seclabel:first-child{margin-top:0}
 .seclabel .sub{font-weight:400;color:var(--ink-3)}
@@ -601,6 +621,8 @@ svg.ic{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7;str
               <p>지금 열어 둔 폴더로 올라갑니다.</p>
               <div class="pth" id="uploadPath"></div>
             </div>
+
+            <div id="upArea"></div>
 
             <div id="folderArea"></div>
             <div id="photoArea"></div>
@@ -1760,14 +1782,7 @@ document.addEventListener("click", e => {
     f.token = f.pub ? newToken() : null;      // 공개할 때마다 새 토큰 — 이전 링크는 되살아나지 않는다
     renderExplorer(); return;
   }
-  if (t.closest("#btnUpload")){
-    const stamp = "09.16 " + String(10 + (shotNo % 9)).padStart(2,"0") + ":" + String((shotNo * 7) % 60).padStart(2,"0");
-    NODE[cwd].photos.push(Photo("IMG_0" + (++shotNo),
-      ["linear-gradient(140deg,#A9BEDB,#7FA3C8)","linear-gradient(140deg,#E4B77C,#C88A6B)","linear-gradient(140deg,#8FB79C,#5F7D6B)",
-       "linear-gradient(140deg,#C0A8BC,#A8879E)","linear-gradient(140deg,#9BC4BC,#6FA6A0)","linear-gradient(140deg,#DCC183,#C4A45E)"][shotNo % 6],
-      stamp, shotNo % 3 ? stamp.replace("09.16","09.15") : null));
-    renderExplorer(); renderChrome(); renderStats(); return;
-  }
+  if (t.closest("#btnUpload")) return startUpload();
   const cp = t.closest("[data-copy]");
   if (cp){ const o = cp.textContent; cp.textContent = "복사됨"; setTimeout(() => cp.textContent = o, 1400); return; }
 
@@ -1832,6 +1847,87 @@ document.addEventListener("keydown", e => {
 });
 
 let shotNo = 560;
+
+/* ── 업로드 진행 ────────────────────────────────────────────────────────────
+   실제 서비스는 **파일 하나에 요청 하나**로 보내고 XHR 진행 이벤트로 퍼센트를 받는다.
+   퍼센트는 브라우저 → 서버 구간이다. 그 뒤 서버가 Drive 에 저장하는 동안은 "저장 중"으로
+   따로 쓴다 — 100% 를 완료라고 쓰면 마지막 몇 초가 멈춘 것처럼 보인다.
+   여기서는 그 화면만 흉내 낸다(타이머). */
+let UPJOBS = [], upTimer = null;
+const UP_LABEL = {wait:"대기", send:"보내는 중", store:"저장 중", done:"완료", fail:"실패"};
+const upPct = j => (j.state === "done" || j.state === "store") ? 100
+                 : Math.min(100, Math.floor(j.sent / j.size * 100));
+const upSize = b => b >= 1048576 ? (b / 1048576).toFixed(1) + "MB" : Math.max(1, Math.round(b / 1024)) + "KB";
+
+function addShot(){
+  const stamp = "09.16 " + String(10 + (shotNo % 9)).padStart(2,"0") + ":" + String((shotNo * 7) % 60).padStart(2,"0");
+  NODE[cwd].photos.push(Photo("IMG_0" + (++shotNo),
+    ["linear-gradient(140deg,#A9BEDB,#7FA3C8)","linear-gradient(140deg,#E4B77C,#C88A6B)","linear-gradient(140deg,#8FB79C,#5F7D6B)",
+     "linear-gradient(140deg,#C0A8BC,#A8879E)","linear-gradient(140deg,#9BC4BC,#6FA6A0)","linear-gradient(140deg,#DCC183,#C4A45E)"][shotNo % 6],
+    stamp, shotNo % 3 ? stamp.replace("09.16","09.15") : null));
+}
+
+function renderUpload(){
+  const el = document.getElementById("upArea");
+  if (!el) return;
+  if (!UPJOBS.length){ el.innerHTML = ""; return; }
+  const busy = UPJOBS.some(j => j.state !== "done" && j.state !== "fail");
+  const done = UPJOBS.filter(j => j.state === "done").length;
+  const fail = UPJOBS.filter(j => j.state === "fail").length;
+  const total = UPJOBS.reduce((a,j) => a + j.size, 0);
+  const sent  = UPJOBS.reduce((a,j) => a + j.sent, 0);
+  const all   = total ? Math.floor(sent / total * 100) : 0;
+  el.innerHTML = `
+    <div class="uplist" aria-label="업로드 진행">
+      <div class="hd">
+        <b>${busy ? "올리는 중" : fail ? "일부만 올라갔습니다" : "업로드 완료"} ${done} / ${UPJOBS.length}</b>
+        ${fail ? `<span class="badge warn">실패 ${fail}</span>` : ""}
+        <span class="sp"></span><span class="pc">${all}%</span>
+      </div>
+      <div class="prog" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${all}"
+           aria-label="전체 ${UPJOBS.length}개 중 ${done}개 완료">
+        <i class="${fail && !busy ? "bad" : "on"}" style="width:${all}%"></i></div>
+      ${UPJOBS.map(j => `
+        <div class="uprow">
+          <span class="nm" title="${j.name}">${j.name}</span>
+          <span class="st ${j.state}">${j.state === "send" ? upPct(j) + "%" : UP_LABEL[j.state]}<small>${upSize(j.size)}</small></span>
+          <div class="prog"><i class="${j.state === "fail" ? "bad" : j.state === "done" ? "" : "on"}" style="width:${upPct(j)}%"></i></div>
+          ${j.reason ? `<span class="rs">${j.reason}</span>` : ""}
+        </div>`).join("")}
+      <p class="hint">퍼센트는 <b>서버까지 보낸 양</b>입니다. 100% 뒤에는 서버가 Google Drive 에 저장하는 시간이 조금 더 걸립니다.</p>
+    </div>`;
+}
+
+/* 동시에 둘씩 보낸다 — 실제 화면과 같은 규칙이다. */
+function startUpload(){
+  if (upTimer) return;
+  UPJOBS = [
+    {name:"IMG_0571.JPG", size:2_400_000, sent:0, state:"wait"},
+    {name:"IMG_0572.JPG", size:3_100_000, sent:0, state:"wait"},
+    {name:"MOV_0573.MP4", size:41_000_000, sent:0, state:"wait"},
+  ];
+  renderUpload();
+  upTimer = setInterval(() => {
+    const flying = UPJOBS.filter(j => j.state === "send" || j.state === "store");
+    for (const j of UPJOBS){
+      if (flying.length >= 2) break;
+      if (j.state === "wait"){ j.state = "send"; flying.push(j); }
+    }
+    for (const j of flying){
+      if (j.state === "send"){
+        j.sent = Math.min(j.size, j.sent + j.size / 7);
+        if (j.sent >= j.size){ j.state = "store"; j.hold = 3; }   // 저장 구간을 눈에 보이게 둔다
+      } else if (--j.hold <= 0){
+        j.state = "done"; addShot();
+      }
+    }
+    renderUpload();
+    if (UPJOBS.every(j => j.state === "done" || j.state === "fail")){
+      clearInterval(upTimer); upTimer = null;
+      renderExplorer(); renderChrome(); renderStats();
+    }
+  }, 170);
+}
 function createFolder(){
   const name = el("newFolderName").value.trim();
   if (!name){ el("newFolderName").focus(); return; }

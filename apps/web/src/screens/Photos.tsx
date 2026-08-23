@@ -29,6 +29,47 @@ import { ShareModal } from "./photos/ShareModal.tsx";
 
 type Sort = "up" | "taken";
 
+/**
+ * 업로드 한 건의 상태. **퍼센트는 브라우저 → 서버 구간까지다.**
+ * 그 뒤 서버가 Drive 로 다시 올리는 동안은 "저장 중"으로 따로 말한다 —
+ * 100% 를 완료라고 쓰면 마지막 몇 초가 멈춘 것처럼 보인다.
+ */
+type UpState = "wait" | "send" | "store" | "done" | "fail";
+
+interface UpJob {
+  key: string;
+  name: string;
+  size: number;
+  /** 서버까지 보낸 바이트. 실패해도 되돌리지 않는다 — 전체 막대가 뒤로 가면 안 된다 */
+  sent: number;
+  state: UpState;
+  reason?: string;
+}
+
+const UP_LABEL: Record<UpState, string> = {
+  wait: "대기",
+  send: "보내는 중",
+  store: "저장 중",
+  done: "완료",
+  fail: "실패",
+};
+
+/** 동시에 보내는 개수. 무료 서버라 더 늘리면 서로 느려지기만 한다. */
+const UP_AT_ONCE = 2;
+
+/** 파일 크기. 소수점 한 자리까지만 — 진행 표시는 정확도보다 읽히는 게 먼저다. */
+function fileSize(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+  return `${Math.max(1, Math.round(bytes / 1024))}KB`;
+}
+
+/** 진행률(%). 크기를 모르는 파일은 끝난 것만 100 으로 본다. */
+function upPct(j: UpJob): number {
+  if (j.state === "done" || j.state === "store") return 100;
+  if (!j.size) return j.state === "fail" ? 100 : 0;
+  return Math.min(100, Math.floor((j.sent / j.size) * 100));
+}
+
 /** 업로드 응답. 일부만 실패할 수 있으므로 전체 실패로 처리하지 않는다. */
 interface UploadResult {
   uploaded: Photo[];
@@ -127,26 +168,83 @@ export function PhotosScreen() {
   );
 
   // ── 업로드 ───────────────────────────────────────────────────────
+  // **파일 하나에 요청 하나다.** 전부를 한 요청에 담으면 진행률이 "전체 몇 %" 하나뿐이라
+  // 어느 파일이 올라가는 중인지 말할 수 없고, 큰 파일 하나가 413 이면 그 뒤 파일까지 같이 날아간다.
+  // 서버 라우트는 그대로다 — 여러 개도 받고 한 개도 받는다.
   const fileRef = useRef<HTMLInputElement>(null);
-  const [failed, setFailed] = useState<UploadResult["failed"]>([]);
+  const [jobs, setJobs] = useState<UpJob[]>([]);
+  const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
-  const uploadMut = useApiMutation<File[], UploadResult>(
-    (files) => {
-      const form = new FormData();
-      for (const f of files) form.append("files", f, f.name);
-      // 업로드 대상은 지금 열어 둔 폴더다. 앱이 촬영 시각 등으로 자동 분류해 옮기지 않는다.
-      return api.upload<UploadResult>(`/api/groups/${gid}/folders/${currentId}/photos`, form);
-    },
-    gid,
-    (d) => setFailed(d.failed),
-  );
 
-  const send = (list: FileList | null) => {
+  const send = async (list: FileList | null) => {
     const files = list ? Array.from(list) : [];
-    if (!files.length || !currentId) return;
-    setFailed([]);
-    uploadMut.mutate(files);
+    if (!files.length || !currentId || busy) return;
+
+    const stamp = String(Date.now());
+    const queued: UpJob[] = files.map((f, i) => ({
+      key: `${stamp}-${i}`,
+      name: f.name,
+      size: f.size,
+      sent: 0,
+      state: "wait",
+    }));
+    setJobs(queued);
+    setBusy(true);
+
+    const patchJob = (key: string, up: Partial<UpJob>) =>
+      setJobs((cur) => cur.map((j) => (j.key === key ? { ...j, ...up } : j)));
+
+    let next = 0;
+    const worker = async (): Promise<void> => {
+      for (;;) {
+        const i = next++;
+        const file = files[i];
+        const job = queued[i];
+        if (!file || !job) return;
+
+        const form = new FormData();
+        // 업로드 대상은 지금 열어 둔 폴더다. 앱이 촬영 시각 등으로 자동 분류해 옮기지 않는다.
+        form.append("files", file, file.name);
+        patchJob(job.key, { state: "send" });
+
+        try {
+          const r = await api.upload<UploadResult>(
+            `/api/groups/${gid}/folders/${currentId}/photos`,
+            form,
+            ({ loaded, total }) => {
+              // total 에는 multipart 경계까지 들어 있어 파일 크기와 다르다 — 비율로 환산한다
+              if (!total) return;
+              patchJob(job.key, {
+                sent: Math.round((loaded / total) * file.size),
+                state: loaded >= total ? "store" : "send",
+              });
+            },
+          );
+          // 파일 하나짜리 요청이므로 failed 에 들어 있으면 그 파일이 거부된 것이다
+          const bad = r.failed[0];
+          patchJob(
+            job.key,
+            bad ? { state: "fail", reason: bad.reason } : { state: "done", sent: file.size },
+          );
+        } catch (e) {
+          patchJob(job.key, {
+            state: "fail",
+            reason: e instanceof ApiError ? e.message : "올리지 못했습니다",
+          });
+        }
+      }
+    };
+
+    await Promise.all(Array.from({ length: Math.min(UP_AT_ONCE, files.length) }, worker));
+    setBusy(false);
+    invalidate(); // 파일마다 무효화하면 업로드 내내 목록이 다시 그려진다 — 끝나고 한 번만
   };
+
+  const upTotal = jobs.reduce((a, j) => a + j.size, 0);
+  const upSent = jobs.reduce((a, j) => a + j.sent, 0);
+  const upDone = jobs.filter((j) => j.state === "done").length;
+  const upFail = jobs.filter((j) => j.state === "fail").length;
+  const upAll = upTotal ? Math.floor((upSent / upTotal) * 100) : 0;
 
   // ── 공유 묶음 ────────────────────────────────────────────────────
   // 공유는 이 화면에서 켜고 끄지 않는다. 묶음 단위라 폴더 하나의 토글로 표현할 수 없다.
@@ -374,9 +472,9 @@ export function PhotosScreen() {
             <option value="up">업로드순</option>
             <option value="taken">촬영순</option>
           </select>
-          <button className="btn" onClick={() => fileRef.current?.click()} disabled={uploadMut.isPending}>
+          <button className="btn" onClick={() => fileRef.current?.click()} disabled={busy}>
             <Icon name="up" />
-            {uploadMut.isPending ? "올리는 중…" : "사진 올리기"}
+            {busy ? `올리는 중 ${upDone} / ${jobs.length}` : "사진 올리기"}
           </button>
           <input
             ref={fileRef}
@@ -385,7 +483,7 @@ export function PhotosScreen() {
             accept="image/*,video/*"
             hidden
             onChange={(e) => {
-              send(e.target.files);
+              void send(e.target.files);
               e.target.value = ""; // 같은 파일을 다시 골라도 change 가 뜨게 비운다
             }}
           />
@@ -446,7 +544,7 @@ export function PhotosScreen() {
           onDrop={(e) => {
             e.preventDefault();
             setDragging(false);
-            send(e.dataTransfer.files);
+            void send(e.dataTransfer.files);
           }}
         >
           <span className="tile" style={{ background: "var(--brand-soft)", color: "var(--brand)" }}>
@@ -462,24 +560,65 @@ export function PhotosScreen() {
               i === crumbs.length - 1 ? <b key={c.id}>{c.name}</b> : <span key={c.id}>{c.name} / </span>,
             )}
           </div>
-          {uploadMut.isPending ? (
+          {busy ? (
             <p style={{ marginTop: 10, color: "var(--brand)", fontWeight: 600, fontSize: 12.5 }}>
               업로드 중… 창을 닫지 마세요
             </p>
           ) : null}
         </div>
 
-        {uploadMut.isError ? <ErrorBox error={uploadMut.error} /> : null}
+        {/*
+          업로드 진행. 파일마다 한 줄, 전체는 맨 위 한 줄이다.
+          일부만 실패할 수 있으므로 전체 실패로 처리하지 않고 그 파일 줄에 이유를 적는다.
+        */}
+        {jobs.length ? (
+          <div className="uplist" aria-label="업로드 진행">
+            <div className="hd">
+              <b>
+                {busy ? "올리는 중" : upFail ? "일부만 올라갔습니다" : "업로드 완료"} {upDone} /{" "}
+                {jobs.length}
+              </b>
+              {upFail ? <span className="badge warn">실패 {upFail}</span> : null}
+              <span className="sp" />
+              <span className="pc">{upAll}%</span>
+            </div>
+            <div
+              className="prog"
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={upAll}
+              aria-label={`전체 ${jobs.length}개 중 ${upDone}개 완료`}
+            >
+              <i
+                className={upFail && !busy ? "bad" : busy ? "on" : ""}
+                style={{ width: `${upAll}%` }}
+              />
+            </div>
 
-        {/* 일부만 실패했을 수 있다 — 전체 실패로 처리하지 않고 파일마다 이유를 적는다 */}
-        {failed.length ? (
-          <div className="tip warn" style={{ marginBottom: 16, display: "grid", gap: 4 }}>
-            <b>올리지 못한 파일 {failed.length}개</b>
-            {failed.map((f) => (
-              <span key={f.name} className="mono" style={{ fontSize: 11 }}>
-                {f.name} — {f.reason}
-              </span>
+            {jobs.map((j) => (
+              <div className="uprow" key={j.key}>
+                <span className="nm" title={j.name}>
+                  {j.name}
+                </span>
+                <span className={"st " + j.state}>
+                  {j.state === "send" ? `${upPct(j)}%` : UP_LABEL[j.state]}
+                  <small>{fileSize(j.size)}</small>
+                </span>
+                <div className="prog">
+                  <i
+                    className={j.state === "fail" ? "bad" : j.state === "done" ? "" : "on"}
+                    style={{ width: `${upPct(j)}%` }}
+                  />
+                </div>
+                {j.reason ? <span className="rs">{j.reason}</span> : null}
+              </div>
             ))}
+
+            <p className="hint">
+              퍼센트는 <b>서버까지 보낸 양</b>입니다. 100% 뒤에는 서버가 Google Drive 에 저장하는
+              시간이 조금 더 걸립니다.
+            </p>
           </div>
         ) : null}
 
