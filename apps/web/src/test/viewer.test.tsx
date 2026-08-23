@@ -74,8 +74,18 @@ describe("폴더 뷰어", () => {
     });
 
     const img = (await screen.findByAltText("drone-001.jpg")) as HTMLImageElement;
-    expect(img.getAttribute("src")).toBe("/api/media/p1?t=tok-drone");
-    expect(img.getAttribute("src")).not.toMatch(/drive|googleapis|googleusercontent/);
+    const src = img.getAttribute("src") ?? "";
+
+    // 주소 전체를 문자열로 못 박지 않는다 — 크기 인자가 붙고 빠지는 것은 성능 문제이고,
+    // 여기서 지켜야 하는 것은 **어디로 나가는가**다. 그 셋만 정확히 본다.
+    const u = new URL(src, "http://localhost");
+    expect(u.pathname).toMatch(/^\/api\/media\/p1(\/thumb)?$/); // TripMate 주소다
+    expect(u.searchParams.get("t")).toBe("tok-drone"); // 토큰이 붙어 권한 검사를 지난다
+    expect(src).not.toMatch(/drive|googleapis|googleusercontent|^https?:/);
+
+    // 목록에서 원본을 받지 않는다. 원본을 깔면 폴더 하나가 수십 MB 가 되어 아무것도 안 뜬다.
+    expect(u.pathname.endsWith("/thumb")).toBe(true);
+    expect(img.getAttribute("loading")).toBe("lazy");
     // 촬영 메타데이터가 없어 업로드 시각으로 대체한 것은 배지로 알린다
     expect(screen.getByText("촬영 정보 없음")).toBeTruthy();
     // 사진에 링크를 걸지 않는다 — 원본을 새 창으로 열어 주면 주소가 밖으로 새 나간다

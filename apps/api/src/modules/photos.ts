@@ -426,10 +426,12 @@ export async function photoRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/media/:pid", (req, reply) => serveMedia(req, reply));
 
   /**
-   * 썸네일 — 지금은 트랜스코딩을 하지 않으므로 **원본과 같은 스트림**을 준다.
-   * (리사이즈 파이프라인이 생기기 전까지 경로만 먼저 열어 둔다. 프론트가 나중에 바꾸지 않아도 되게.)
+   * 썸네일 — 그리드와 상세 보기가 원본 대신 이걸 쓴다.
+   *
+   * 원본을 그대로 깔면 사진 9장짜리 폴더 하나가 **41MB** 다 (실측). 줄인 것은 장당 30~40KB 라
+   * 1000배 가까이 가볍다. 저장소가 못 주면 원본으로 되돌아가므로 사진이 안 보이는 일은 없다.
    */
-  app.get("/api/media/:pid/thumb", (req, reply) => serveMedia(req, reply));
+  app.get("/api/media/:pid/thumb", (req, reply) => serveMedia(req, reply, true));
 }
 
 // ── 접근 제어 ───────────────────────────────────────────────────────
@@ -468,9 +470,27 @@ async function canSeeMedia(
 }
 
 const mediaParams = z.object({ pid: z.string().uuid() });
-const mediaQuery = z.object({ t: z.string().min(1).optional() });
+const mediaQuery = z.object({ t: z.string().min(1).optional(), s: z.string().optional() });
 
-async function serveMedia(req: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> {
+/**
+ * 고를 수 있는 썸네일 크기. **목록에 없는 값은 받지 않는다** —
+ * 아무 숫자나 허용하면 같은 사진이 크기마다 캐시를 따로 차지하고, 저장소 요청도 그만큼 늘어난다.
+ *   400  그리드 타일 (2배 화면까지 감당한다)
+ *   1600 상세 보기
+ */
+const THUMB_SIZES = [400, 1600] as const;
+const DEFAULT_THUMB = 400;
+
+function thumbSize(raw: string | undefined): number {
+  const n = Number(raw);
+  return (THUMB_SIZES as readonly number[]).includes(n) ? n : DEFAULT_THUMB;
+}
+
+async function serveMedia(
+  req: FastifyRequest,
+  reply: FastifyReply,
+  wantThumb = false,
+): Promise<FastifyReply> {
   // 권한이 없으면 404 로 답한다 — 존재 자체를 알려주지 않는다.
   const missing = notFound("사진을 찾을 수 없습니다");
 
@@ -489,15 +509,26 @@ async function serveMedia(req: FastifyRequest, reply: FastifyReply): Promise<Fas
   if (!(await canSeeMedia(req.user, p, token))) throw missing;
 
   const s = await storage();
-  const stream = await s.stream(p.storage_key);
 
-  const size = Number(p.size_bytes);
-  reply.header("Content-Type", p.mime);
-  if (Number.isFinite(size) && size > 0) reply.header("Content-Length", size);
   // 파일 내용은 바뀌지 않는다 (지우고 새로 올리면 id 가 달라진다) → 오래 캐시해도 안전하다.
   // private 인 이유: 공유 링크가 죽은 뒤 공용 캐시가 대신 내주면 안 되기 때문이다.
   reply.header("Cache-Control", "private, max-age=31536000, immutable");
   reply.header("X-Content-Type-Options", "nosniff");
+
+  if (wantThumb) {
+    const thumb = await s.thumbnail(p.storage_key, thumbSize(q.success ? q.data.s : undefined));
+    if (thumb) {
+      reply.header("Content-Type", thumb.mime);
+      reply.header("Content-Length", thumb.body.byteLength);
+      return reply.send(thumb.body);
+    }
+    // 못 만들었으면 조용히 원본을 낸다. 느릴지언정 안 보이는 것보다 낫다.
+  }
+
+  const stream = await s.stream(p.storage_key);
+  const size = Number(p.size_bytes);
+  reply.header("Content-Type", p.mime);
+  if (Number.isFinite(size) && size > 0) reply.header("Content-Length", size);
   return reply.send(stream);
 }
 

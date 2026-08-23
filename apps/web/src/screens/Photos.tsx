@@ -16,7 +16,7 @@
 import { canMoveFolder } from "@tripmate/core";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ApiError, api } from "../api/client.ts";
+import { ApiError, api, thumbUrl } from "../api/client.ts";
 import { useApiMutation, useFolder, useFolders, useInvalidateGroup } from "../api/hooks.ts";
 import type { FolderNodeDto, Photo } from "../api/types.ts";
 import { Badge, ErrorBox, Field } from "../components/Bits.tsx";
@@ -740,11 +740,17 @@ export function PhotosScreen() {
               >
                 {isVideo(p) ? (
                   <>
-                    <video
-                      src={p.url}
-                      preload="metadata"
-                      muted
-                      style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                    {/*
+                      동영상도 **포스터 이미지**로 깐다. <video> 는 loading="lazy" 가 없어서
+                      폴더를 열자마자 모든 동영상이 한꺼번에 받아지기 시작한다 —
+                      20MB 짜리 하나만 있어도 목록 전체가 느려진다.
+                    */}
+                    <img
+                      src={thumbUrl(p.id, 400)}
+                      alt={p.name}
+                      loading="lazy"
+                      decoding="async"
+                      style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", background: "#0B0D12" }}
                     />
                     {/* 동영상 표시 — 재생 아이콘 오버레이 */}
                     <span
@@ -765,9 +771,10 @@ export function PhotosScreen() {
                   </>
                 ) : (
                   <img
-                    src={p.url}
+                    src={thumbUrl(p.id, 400)}
                     alt={p.name}
                     loading="lazy"
+                    decoding="async"
                     style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
                   />
                 )}

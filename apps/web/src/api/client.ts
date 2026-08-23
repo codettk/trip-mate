@@ -111,6 +111,19 @@ export const api = {
     upload<T>(path, form, onProgress),
 };
 
-/** 이미지 주소. 서버가 저장소에서 받아 전달한다 — Drive 링크가 아니다. */
+/** 원본 주소. 서버가 저장소에서 받아 전달한다 — Drive 링크가 아니다. */
 export const mediaUrl = (photoId: string, token?: string): string =>
   `${BASE}/api/media/${photoId}${token ? `?t=${encodeURIComponent(token)}` : ""}`;
+
+/**
+ * 줄인 이미지 주소. **목록과 상세 보기는 원본을 쓰지 않는다.**
+ * 사진 9장짜리 폴더 하나가 원본으로는 41MB, 줄인 것으로는 300KB 남짓이다.
+ *
+ * 400  그리드 타일 · 1600 상세 보기 (서버가 이 둘만 받는다)
+ * 동영상도 포스터 이미지가 나온다 — 그래서 목록에서 `<video>` 를 띄우지 않아도 된다.
+ */
+export const thumbUrl = (photoId: string, size: 400 | 1600, token?: string): string => {
+  const q = new URLSearchParams({ s: String(size) });
+  if (token) q.set("t", token);
+  return `${BASE}/api/media/${photoId}/thumb?${q.toString()}`;
+};

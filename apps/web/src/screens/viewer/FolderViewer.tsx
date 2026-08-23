@@ -11,8 +11,9 @@
  *  · 업로드·삭제 — 쓰기 동작이 하나도 없다
  *  · 문서·일정·정산으로 넘어가기 — 이 파일에는 앱 안으로 들어가는 링크가 없다
  *
- * 이미지 주소는 **서버가 준 `photo.url` 을 그대로 쓴다.**
- * Drive 파일 링크나 서명 URL 을 만들지 않는다 — 서버가 저장소에서 받아 전달한다.
+ * 이미지 주소는 **언제나 TripMate 주소다.** Drive 파일 링크나 서명 URL 을 만들지 않는다 —
+ * 서버가 저장소에서 받아 전달한다. 목록과 상세는 원본이 아니라 **줄인 이미지**를 쓴다
+ * (원본 그대로 깔면 사진 9장짜리 폴더 하나가 41MB 다). 동영상은 눌러야 받아진다.
  *
  * 멤버가 열면 서버가 `memberView:true` 를 준다. 그래도 **자동으로 앱에 보내지 않는다** —
  * 방장이 "밖에서는 뭐가 보이는지" 확인하려고 일부러 여는 경우가 있어서, 배너만 띄운다.
@@ -23,6 +24,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { kstStamp, sharePath, sharedFolderPath } from "@tripmate/core";
+import { thumbUrl } from "../../api/client.ts";
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { api } from "../../api/client.ts";
@@ -289,22 +291,22 @@ export function FolderViewerScreen() {
                   aria-label={`${p.name} 크게 보기`}
                   style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
                 >
-                  {isVideo(p.mime) ? (
-                    <video
-                      src={p.url}
-                      muted
-                      playsInline
-                      preload="metadata"
-                      style={{ width: "100%", height: "100%", objectFit: "cover", background: "#0B0D12" }}
-                    />
-                  ) : (
-                    <img
-                      src={p.url}
-                      alt={p.name}
-                      loading="lazy"
-                      style={{ width: "100%", height: "100%", objectFit: "cover", background: "var(--sunken)" }}
-                    />
-                  )}
+                  {/*
+                    동영상도 포스터 이미지로 깐다. <video> 에는 loading="lazy" 가 없어서
+                    폴더를 열자마자 모든 동영상이 한꺼번에 받아지기 시작한다.
+                  */}
+                  <img
+                    src={thumbUrl(p.id, 400, token)}
+                    alt={p.name}
+                    loading="lazy"
+                    decoding="async"
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      objectFit: "cover",
+                      background: isVideo(p.mime) ? "#0B0D12" : "var(--sunken)",
+                    }}
+                  />
                 </button>
                 <span className="nm">{p.name}</span>
                 <span className="tm">{stamp(sort === "taken" ? p.takenAt : p.uploadedAt)}</span>
@@ -343,15 +345,18 @@ export function FolderViewerScreen() {
             }}
           >
             {isVideo(cur.mime) ? (
+              // 동영상만 원본을 받는다. 여기서는 사용자가 이미 그 한 장을 고른 뒤다.
               <video
                 src={cur.url}
+                poster={thumbUrl(cur.id, 1600, token)}
                 controls
                 autoPlay
                 style={{ maxWidth: "100%", maxHeight: "78vh", borderRadius: "var(--r-md)" }}
               />
             ) : (
+              // 화면에 띄우는 데 원본(3~5MB)은 필요 없다. 긴 변 1600px 이면 350KB 남짓이다.
               <img
-                src={cur.url}
+                src={thumbUrl(cur.id, 1600, token)}
                 alt={cur.name}
                 style={{ maxWidth: "100%", maxHeight: "78vh", borderRadius: "var(--r-md)" }}
               />

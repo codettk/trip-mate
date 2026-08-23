@@ -15,6 +15,12 @@
 import type { Readable } from "node:stream";
 import { env } from "../env.ts";
 
+/** 썸네일 한 장. 저장소가 만들어 둔 것을 서버가 받아서 전달한다. */
+export interface StoredThumb {
+  body: Buffer;
+  mime: string;
+}
+
 export interface StoredFile {
   /** local: 상대 경로 / gdrive: fileId. DB 의 photos.storage_key 에 들어간다 */
   key: string;
@@ -44,6 +50,18 @@ export interface StorageAdapter {
 
   /** 서버가 받아서 전달한다. 절대 URL 을 돌려주지 않는다. */
   stream(key: string): Promise<Readable>;
+
+  /**
+   * 줄인 이미지. 그리드에 원본을 그대로 깔면 폴더 하나가 수십 MB 가 된다.
+   *
+   * **못 만들면 null 을 준다** — 호출부가 원본으로 되돌아간다. 썸네일이 없다고
+   * 사진이 안 보이면 안 되기 때문이다. (저장소가 아직 썸네일을 만들지 않았거나,
+   * 요청 제한에 걸렸거나, 애초에 만들 수 없는 형식일 수 있다.)
+   *
+   * ⚠ 여기서도 URL 을 돌려주지 않는다. 저장소의 썸네일 주소는 **인증 없이 열리므로**
+   *   브라우저에 넘기는 순간 폴더 범위 통제가 무너진다. 반드시 바이트로 받아 전달한다.
+   */
+  thumbnail(key: string, size: number): Promise<StoredThumb | null>;
 
   /**
    * 사진 이름을 바꾸면 저장소 쪽 이름도 따라간다.

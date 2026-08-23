@@ -104,6 +104,14 @@ export class LocalAdapter implements StorageAdapter {
     // 의도적으로 비어 있다
   }
 
+  /**
+   * 개발용 로컬 저장소는 줄인 이미지를 만들지 않는다. null 을 주면 호출부가 원본을 낸다 —
+   * 개발 중에는 파일이 작아서 문제가 되지 않고, 리사이즈 의존성을 개발에까지 끌고 오지 않는다.
+   */
+  async thumbnail(): Promise<null> {
+    return null;
+  }
+
   async deleteFile(key: string): Promise<void> {
     const path = resolve(ROOT, key);
     if (!path.startsWith(ROOT)) return;

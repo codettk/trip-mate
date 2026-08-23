@@ -9,6 +9,7 @@
  */
 
 import { kstStamp } from "@tripmate/core";
+import { thumbUrl } from "../../api/client.ts";
 import { useEffect } from "react";
 import type { Photo } from "../../api/types.ts";
 import { Badge } from "../../components/Bits.tsx";
@@ -108,10 +109,18 @@ export function Lightbox({
         }}
       >
         {isVideo(photo) ? (
-          <video src={photo.url} controls style={{ width: "100%", maxHeight: "56vh" }} />
-        ) : (
-          <img
+          // 동영상은 원본을 스트리밍한다. preload="none" 이라 **누르기 전에는 받지 않는다.**
+          <video
             src={photo.url}
+            poster={thumbUrl(photo.id, 1600)}
+            preload="none"
+            controls
+            style={{ width: "100%", maxHeight: "56vh" }}
+          />
+        ) : (
+          // 화면에 띄우는 데 원본(3~5MB)은 필요 없다. 긴 변 1600px 이면 350KB 남짓이다.
+          <img
+            src={thumbUrl(photo.id, 1600)}
             alt={photo.name}
             style={{ width: "100%", maxHeight: "56vh", objectFit: "contain", display: "block" }}
           />

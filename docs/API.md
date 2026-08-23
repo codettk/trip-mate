@@ -165,6 +165,8 @@
 
 | 메서드 | 경로 | 설명 |
 |---|---|---|
+| GET | `/api/media/:pid` | 원본. 멤버 세션 또는 `?t=` 묶음 토큰 |
+| GET | `/api/media/:pid/thumb` | 줄인 이미지. `?s=400`(그리드) 또는 `?s=1600`(상세). **원본과 똑같이 권한을 검사한다.** 저장소가 못 주면 원본으로 되돌아간다 |
 | GET | `/api/groups/:gid/folders` | 전체 트리 `{root: FolderNode}` |
 | GET | `/api/groups/:gid/folders/:fid` | `?sort=` 는 `up`(기본) 또는 `taken`. `{folder, breadcrumb, children, photos, sort}` |
 | POST | `/api/groups/:gid/folders` | `{parentId, name}` |

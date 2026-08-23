@@ -240,6 +240,39 @@ describe("사진 업로드 → 미디어 접근 제어", () => {
     expect((await anon.fetch(`/api/media/${inside.id}?t=${matesToken}`)).status).toBe(404);
   });
 
+  /**
+   * 썸네일 경로는 **원본과 똑같은 문을 지나야 한다.**
+   * 성능 때문에 경로를 하나 더 열었는데 거기에 권한 검사가 빠지면, 원본을 막아 둔 사진을
+   * 줄인 그림으로는 볼 수 있게 된다 — 유출은 화질과 무관하다.
+   */
+  it("⑧ 썸네일 경로도 원본과 똑같이 권한을 검사한다", async () => {
+    // 멤버는 묶음과 무관하게 본다
+    for (const p of [inside, deep, outside]) {
+      expect((await jh.fetch(`/api/media/${p.id}/thumb?s=400`)).status).toBe(200);
+    }
+    // 비로그인·토큰 없음
+    expect((await anon.fetch(`/api/media/${inside.id}/thumb`)).status).toBe(404);
+    // 묶음에 담긴 폴더는 열리고
+    expect((await anon.fetch(`/api/media/${inside.id}/thumb?s=400&t=${parentsToken}`)).status).toBe(200);
+    // 묶음 밖 폴더는 어떤 토큰으로도 안 열린다
+    for (const t of [parentsToken, matesToken, "위조토큰", ""]) {
+      expect((await anon.fetch(`/api/media/${outside.id}/thumb?s=400&t=${t}`)).status).toBe(404);
+    }
+  });
+
+  it("⑨ 이상한 크기를 보내도 터지지 않는다 (허용 목록 밖은 기본값으로 떨어진다)", async () => {
+    for (const s of ["99999", "-1", "abc", "", "0"]) {
+      const res = await jh.fetch(`/api/media/${inside.id}/thumb?s=${encodeURIComponent(s)}`);
+      expect(res.status).toBe(200);
+    }
+  });
+
+  it("⑩ 저장소가 썸네일을 못 주면 원본으로 되돌아간다 (사진이 안 보이면 안 된다)", async () => {
+    // 테스트는 local 드라이버라 썸네일을 만들지 않는다 — 그래도 200 이어야 한다
+    const res = await jh.fetch(`/api/media/${inside.id}/thumb?s=400`);
+    expect(res.status).toBe(200);
+  });
+
   it("⑦ 묶음에서 폴더를 빼면 그 폴더만 죽고 링크 주소는 산다", async () => {
     const list = await shares();
     const parents = list.find((s) => s.label === "부모님께")!;

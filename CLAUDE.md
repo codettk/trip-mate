@@ -55,6 +55,12 @@ TripMate는 이 넷을 **하나의 여행 모임 = 하나의 작업 공간**으�
 - **업로드 대상은 지금 열어 둔 폴더다.** 앱이 촬영 시각 등으로 자동 분류해 옮기지 않는다.
 - 정렬은 **업로드순이 기본**, **촬영순**을 선택할 수 있다.
   **촬영 시각 메타데이터가 없으면 업로드 시각을 촬영 시각으로 믿는다.**
+- **목록과 상세 보기는 원본을 받지 않는다.** 원본을 그대로 깔면 사진 9장짜리 폴더 하나가 **41MB** 다(실측).
+  Drive 가 만들어 둔 썸네일을 서버가 받아 전달한다 — 그리드 `s400`(30~40KB), 상세 `s1600`(150~350KB).
+  **동영상도 포스터 이미지로 깐다.** `<video>` 에는 `loading="lazy"` 가 없어서 폴더를 열자마자
+  전부 받기 시작하기 때문이다. 원본은 **동영상 재생을 누를 때만** 받는다.
+  썸네일을 못 받으면(429·미생성 등) **조용히 원본으로 되돌아간다** — 사진이 안 보이면 안 된다.
+  경위는 `docs/decisions/2026-08-23-thumbnails.md`.
 - **화면에 찍히는 시각은 전부 한국 시간(KST)이다.** 규칙은 `packages/core/src/tz.ts` 한 곳뿐이고,
   서버와 브라우저가 같은 함수를 부른다. `Date#getHours()` 나 `new Date(문자열)` 을 시각 표시·
   EXIF 해석에 쓰지 않는다 — **그 코드가 도는 기계의 시간대**를 따라가서, 개발 PC(KST)와
@@ -72,6 +78,9 @@ TripMate는 이 넷을 **하나의 여행 모임 = 하나의 작업 공간**으�
 >
 > 이미지 자체도 TripMate URL로 나간다 — **서버가 Drive에서 받아 전달하고,
 > Drive 파일 링크나 서명 URL을 브라우저에 노출하지 않는다.**
+> Drive 의 **썸네일 주소도 마찬가지다.** 그 주소는 인증 없이 열리므로 브라우저에 넘기면
+> 묶음 밖 사진까지 주소만 알면 보인다. **유출은 화질과 무관하다** — 썸네일 경로(`/thumb`)도
+> 원본과 **똑같은 권한 검사**를 지난다.
 
 **공유 단위는 폴더가 아니라 묶음(`share_links`)이다.**
 공유를 폴더 행에 붙여 두면 링크 하나가 폴더 하나밖에 못 가리키고,
@@ -317,6 +326,7 @@ docs/decisions/2026-08-22-kakao-and-drive-live.md    카카오·Drive 실연동 
 docs/decisions/2026-08-23-upload-progress.md         업로드 진행률을 파일별로 쪼갠 이유 (fetch 에는 진행 이벤트가 없다)
 docs/decisions/2026-08-23-settled-items.md           "이미 정산함"을 정산 제외와 다른 상태로 둔 이유
 docs/decisions/2026-08-23-korea-time.md              시각을 전부 한국 시간으로 고정한 이유 (EXIF·표시 두 겹으로 밀려 있었다)
+docs/decisions/2026-08-23-thumbnails.md              목록·상세가 원본을 받던 것을 Drive 썸네일로 바꾼 이유 (폴더 하나 41MB)
 docs/design/pencil/trip-mate-prototype.pen           Pencil 디자인 — A 일정 / B 모달 / C 로그인
 .claude/agents/                 api-module · web-screen · settlement-guard · share-auditor
 CLAUDE.md                       이 문서 — 기획 정본
