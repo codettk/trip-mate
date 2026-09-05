@@ -21,7 +21,7 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ApiError, api } from "../api/client.ts";
 import { keys, useGroup, useInvalidateGroup, useMe, useMembers, useSettlement } from "../api/hooks.ts";
-import type { Group, Member } from "../api/types.ts";
+import type { Group, Health, Member } from "../api/types.ts";
 import { Avatar, Badge, ErrorBox, Field } from "../components/Bits.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { ConfirmModal } from "../components/Modal.tsx";
@@ -34,12 +34,6 @@ interface GroupForm {
   memo: string;
   /** 기본 통화. 새 지출의 기본값일 뿐이라 바꿔도 기존 항목에는 소급되지 않는다. */
   cur: string;
-}
-
-interface Health {
-  ok: boolean;
-  authMode: "mock" | "kakao";
-  storage: { driver: string; healthy: boolean };
 }
 
 interface LeaveCheck {

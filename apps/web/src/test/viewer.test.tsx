@@ -10,6 +10,7 @@
  *  · 이미지 주소는 언제나 `/api/media/:id` 다. Drive 링크·서명 URL 이 브라우저로 나가지 않는다
  *  · 정산 뷰어(memberView:false)에는 **상태를 바꾸는 버튼이 아예 없다**
  *  · 만료·오타·비공개 전환을 한 화면으로 처리하고 어느 쪽인지 알려주지 않는다
+ *  · 저장소가 죽었을 때도 **서버 사정을 밖에 말하지 않는다** — "지금 안 된다"까지만
  */
 
 import { screen, within } from "@testing-library/react";
@@ -198,5 +199,41 @@ describe("정산 뷰어", () => {
       },
     });
     expect(await screen.findByText("링크가 만료되었거나 잘못된 주소입니다")).toBeTruthy();
+  });
+});
+
+/**
+ * 밖에서 보는 사람은 사진이 안 뜨면 물어볼 데가 없다. 앱 안보다 여기가 더 급하다.
+ */
+describe("뷰어 · 저장소가 죽었을 때", () => {
+  const DOWN = {
+    "GET /api/health": {
+      "ok": true,
+      "authMode": "mock",
+      "storage": {
+        "driver": "gdrive",
+        "healthy": false
+      }
+    }
+  };
+
+  it("지금 안 된다고 말하고, 링크를 보낸 사람에게 알리라고 한다", async () => {
+    renderApp(VIEW_PATH, DOWN);
+    await screen.findByText(/지금 사진을 불러오지 못하고 있습니다/);
+    expect(visibleText()).toMatch(/링크를 보내 준 사람/);
+  });
+
+  it("서버 사정을 밖에 말하지 않는다", async () => {
+    renderApp(VIEW_PATH, DOWN);
+    await screen.findByText(/지금 사진을 불러오지 못하고 있습니다/);
+    expect(visibleText()).not.toMatch(/토큰|Drive|드라이브|OAuth|refresh/i);
+    // 띠가 생겼다고 앱 안으로 들어가는 통로가 열리면 안 된다
+    expectNoWayIntoApp();
+  });
+
+  it("정상일 때는 띠를 그리지 않는다", async () => {
+    renderApp(VIEW_PATH);
+    await screen.findByRole("heading", { name: "지현의 드론샷" });
+    expect(screen.queryByText(/지금 사진을 불러오지 못하고 있습니다/)).toBeNull();
   });
 });

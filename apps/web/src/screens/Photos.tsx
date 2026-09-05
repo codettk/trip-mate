@@ -22,6 +22,7 @@ import type { FolderNodeDto, Photo } from "../api/types.ts";
 import { Badge, ErrorBox, Field } from "../components/Bits.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { ConfirmModal, Modal } from "../components/Modal.tsx";
+import { StorageBanner } from "../components/StorageBanner.tsx";
 import { FolderTree, pathTo } from "./photos/FolderTree.tsx";
 import { Lightbox, isVideo, stamp } from "./photos/Lightbox.tsx";
 import { PhotoEditModal } from "./photos/PhotoEditModal.tsx";
@@ -365,6 +366,12 @@ export function PhotosScreen() {
 
   return (
     <div className="explorer">
+      {/*
+        Drive 가 죽으면 그리드에 깨진 이미지만 뜬다. 왜 안 보이는지 말해 준다.
+        그리드 열을 가로지르게 둔다 — 트리 옆에 숨으면 못 본다.
+      */}
+      <StorageBanner style={{ gridColumn: "1 / -1" }} />
+
       {/* ── 폴더 트리 ── */}
       <nav className="tree card" aria-label="폴더">
         <div className="card-h">

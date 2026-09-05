@@ -30,6 +30,7 @@ import { useParams, useSearchParams } from "react-router-dom";
 import { api } from "../../api/client.ts";
 import { Icon } from "../../components/Icon.tsx";
 import { Splash } from "../../components/Splash.tsx";
+import { StorageBanner } from "../../components/StorageBanner.tsx";
 import { ViewerHeader } from "./ViewerHeader.tsx";
 
 /** 뷰어 응답. 폴더 하나의 미디어만 들어 있다 — 하위 폴더도, 형제도, 부모 경로도 없다. */
@@ -169,6 +170,11 @@ export function FolderViewerScreen() {
   return (
     <div style={{ minHeight: "100vh", background: "var(--app)" }}>
       <ViewerHeader />
+
+      <StorageBanner
+        contact="링크를 보내 준 사람"
+        wrapStyle={{ maxWidth: 1180, margin: "14px auto 0", padding: "0 26px", width: "100%" }}
+      />
 
       {/*
         멤버가 열었을 때. 자동으로 앱으로 보내지 않는다 —

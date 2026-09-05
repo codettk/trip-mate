@@ -13,6 +13,7 @@
  *  · 정렬은 업로드순이 기본이고 촬영순을 고를 수 있다
  *  · 업로드는 **파일 하나에 요청 하나**이고, 파일마다 몇 % · 전체 중 몇 개인지 화면이 말한다
  *  · 시각은 **보는 사람 기기가 아니라 한국 시간**으로 찍는다 (해외에서 열어도 같은 숫자)
+ *  · 저장소가 죽으면 **깨진 이미지만 두지 않고** 왜 안 보이는지 말한다
  */
 
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
@@ -283,5 +284,42 @@ describe("사진 화면", () => {
       },
     });
     expect(await screen.findByText(/폴더를 불러오지 못했습니다|요청이 실패했습니다/)).toBeTruthy();
+  });
+});
+
+/**
+ * 2026-09-05: Drive 토큰이 만료돼 사진이 통째로 안 나왔는데 화면에는 **깨진 이미지만** 떴다.
+ * 사용자가 눈으로 발견해서 신고할 때까지 아무도 몰랐다. 그래서 띠를 띄운다.
+ */
+describe("저장소가 죽었을 때", () => {
+  const DOWN = {
+    "GET /api/health": {
+      "ok": true,
+      "authMode": "mock",
+      "storage": {
+        "driver": "gdrive",
+        "healthy": false
+      }
+    }
+  };
+
+  it("왜 안 보이는지 말하고, 사진이 사라진 게 아니라고 분명히 한다", async () => {
+    await openPhotos("", {}, DOWN);
+    const tip = await screen.findByText(/지금 사진을 불러오지 못하고 있습니다/);
+    expect(tip).toBeTruthy();
+    // "지웠나?" 가 첫 반응이라 그것부터 부정한다
+    expect(visibleText()).toMatch(/사라진 것이 아닙니다/);
+  });
+
+  it("정상일 때는 띠를 그리지 않는다", async () => {
+    await openPhotos();
+    expect(screen.queryByText(/지금 사진을 불러오지 못하고 있습니다/)).toBeNull();
+  });
+
+  it("원인(토큰·권한·Drive)을 화면에 쓰지 않는다", async () => {
+    await openPhotos("", {}, DOWN);
+    await screen.findByText(/지금 사진을 불러오지 못하고 있습니다/);
+    // 서버 사정은 밖에 알릴 이유가 없고, 사용자가 할 수 있는 일도 아니다
+    expect(visibleText()).not.toMatch(/토큰|Drive|드라이브|OAuth|refresh/i);
   });
 });

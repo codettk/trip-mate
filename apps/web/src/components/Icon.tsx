@@ -33,6 +33,7 @@ export const ICON_PATHS: Record<string, string> = {
   "fx": "<path d=\"M4 8h13l-3-3M20 16H7l3 3\"/>",
   "sort": "<path d=\"M4 7h16M6 12h12M9 17h6\"/>",
   "undo": "<path d=\"M4 9h11a5 5 0 010 10h-5M4 9l4-4M4 9l4 4\"/>",
+  "alert": "<path d=\"M12 4L2.5 20h19z\"/><path d=\"M12 10v4M12 17.2v.1\"/>",
 };
 
 export type IconName = keyof typeof ICON_PATHS;

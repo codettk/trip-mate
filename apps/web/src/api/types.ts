@@ -297,6 +297,13 @@ export interface DocDetail {
   blocks: DocBlock[];
 }
 
+/** `GET /api/health`. `storage.healthy` 가 false 면 사진을 못 가져오는 중이다. */
+export interface Health {
+  ok: boolean;
+  authMode: "mock" | "kakao";
+  storage: { driver: string; healthy: boolean };
+}
+
 export interface InviteInfo {
   code: string;
   url: string;
