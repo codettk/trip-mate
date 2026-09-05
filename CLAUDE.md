@@ -327,6 +327,7 @@ docs/decisions/2026-08-23-upload-progress.md         업로드 진행률을 파�
 docs/decisions/2026-08-23-settled-items.md           "이미 정산함"을 정산 제외와 다른 상태로 둔 이유
 docs/decisions/2026-08-23-korea-time.md              시각을 전부 한국 시간으로 고정한 이유 (EXIF·표시 두 겹으로 밀려 있었다)
 docs/decisions/2026-08-23-thumbnails.md              목록·상세가 원본을 받던 것을 Drive 썸네일로 바꾼 이유 (폴더 하나 41MB)
+docs/decisions/2026-09-05-oauth-project-and-token-expiry.md  운영이 멈춘 이유 (토큰 7일 만료) 와 게시한 프로젝트가 빈 프로젝트였던 것
 docs/design/pencil/trip-mate-prototype.pen           Pencil 디자인 — A 일정 / B 모달 / C 로그인
 .claude/agents/                 api-module · web-screen · settlement-guard · share-auditor
 CLAUDE.md                       이 문서 — 기획 정본
